@@ -23,7 +23,7 @@ Before you begin development, ensure you have the following software and tools i
 Understanding the project's directory structure is key to navigating and contributing to the codebase.
 
 *   `main/`: This is where the core application logic resides.
-    *   `main/application.cc/h`: Manages the overall application state and flow.
+    *   `main/application.cc` and `main/application.h`: Manages the overall application state and flow.
     *   `main/boards/`: Contains board-specific configuration and initialization files. Each supported hardware board has its own subdirectory here (e.g., `main/boards/esp-box/`).
     *   `main/audio_codecs/`: Drivers for various audio codec chips (e.g., ES8311, ES8374).
     *   `main/audio_processing/`: Modules for audio processing tasks like wake-word detection and voice activity detection.
@@ -45,7 +45,7 @@ The primary method for building firmware for specific hardware targets is by usi
 
 **Building with `release.py`:**
 
-*   **List available board types:** The script can usually infer board types or you can inspect `main/boards/` directory names and `main/CMakeLists.txt` for `CONFIG_BOARD_TYPE_` definitions.
+*   **List available board types:** To see available board types, you can inspect the directory names within `main/boards/` or refer to the `CONFIG_BOARD_TYPE_...` definitions in `main/CMakeLists.txt`.
 *   **Build for a specific board:**
     ```bash
     python scripts/release.py <board_directory_name>
@@ -143,7 +143,7 @@ This project supports a wide variety of ESP32-based hardware boards. If you want
         ```
     *   **Important:** The `name` in `config.json` should be unique across all boards and build variants to ensure OTA (Over-The-Air) updates work correctly and don't inadvertently send firmware for one board type to another. It's good practice to prefix it with your board's directory name.
 *   **`<board_name>.cc`:** Create the C++ source file for your board (e.g., `my_custom_board.cc`). This file contains the board initialization class.
-    *   The class should inherit from a base board class like `WifiBoard` (for Wi-Fi enabled boards), `Ml307Board` (for 4G Cat.1 boards using ML307), or `DualNetworkBoard`.
+    *   The class should inherit from a base board class like `WifiBoard` (for Wi-Fi enabled boards), `Ml307Board` (for 4G Cat.1 boards using ML307), or `DualNetworkBoard` (for boards supporting both Wi-Fi and a cellular modem like ML307).
     *   Implement necessary virtual methods like `GetAudioCodec()`, `GetDisplay()`, `GetBacklight()`, `InitializeButtons()`, etc., to provide instances of drivers and initialize hardware components specific to your board.
     *   Use the `DECLARE_BOARD(<YourBoardClassName>);` macro at the end of the file to register your board.
 
@@ -160,19 +160,10 @@ To make the build system aware of your new board, you need to modify `main/CMake
         add_subdirectory(boards/${BOARD_TYPE})
     endif()
     ```
-*   **Update the Kconfig choice:** A little further down in `main/CMakeLists.txt`, you'll find `idf_component_get_property(mc Kconfig)`. After this, there's a `set(kconfig_content ...)`. You need to add your board to the `choice` list and define its `config` option.
-    *   Add to `choice`:
-        ```
-        choice BOARD_TYPE_CHOICE ...
-            config BOARD_TYPE_MY_CUSTOM_BOARD # Add this line
-            ...
-        endchoice
-        ```
-    *   Add the config definition:
-        ```cmake
-        config BOARD_TYPE_MY_CUSTOM_BOARD
-            bool "My Custom Board" # This is the name that will appear in menuconfig
-        ```
+*   **Update the Kconfig choice:** A little further down in `main/CMakeLists.txt`, locate the Kconfig generation block (it usually follows an `idf_component_get_property(mc Kconfig)` call). You need to:
+        1. Add a new `config BOARD_TYPE_YOUR_BOARD_KCONFIG_NAME` entry within the `choice BOARD_TYPE_CHOICE ... endchoice` block.
+        2. Add a corresponding `config BOARD_TYPE_YOUR_BOARD_KCONFIG_NAME bool "Your Board Name in Menuconfig"` definition block after the choice block.
+        Use the `BOARD_KCONFIG_NAME` you defined in the `if(CONFIG_BOARD_TYPE_...)` section (e.g., `MY_CUSTOM_BOARD`). Refer to existing entries for the exact syntax and placement.
 
     This makes your board selectable in `idf.py menuconfig` under "Board Configuration". The `BOARD_TYPE` variable set earlier is used by `scripts/release.py` to find your board's directory.
 
@@ -226,3 +217,34 @@ The project includes a script `scripts/audio_debug_server.py`. This script can b
 **5. Unit Testing (if applicable):**
 
 While not explicitly detailed here, writing and running unit tests for individual modules can help catch bugs early. ESP-IDF has support for unit testing with the Unity framework.
+
+## Contribution Guidelines
+
+We welcome contributions to the Xiaozhi AI Chatbot project! Whether it's bug fixes, new features, or improvements to documentation, your help is appreciated.
+
+**Reporting Issues:**
+
+*   If you encounter a bug, have a feature request, or a question, please check the existing [GitHub Issues](https://github.com/78/xiaozhi-esp32/issues) to see if it has already been reported.
+*   If not, please open a new issue. Use the provided issue templates (e.g., for bugs, feature requests) in the `.github/ISSUE_TEMPLATE/` directory to ensure you provide all necessary information.
+
+**Making Changes (Pull Requests):**
+
+1.  **Fork the repository:** Create your own fork of the [xiaozhi-esp32 repository](https://github.com/78/xiaozhi-esp32) on GitHub.
+2.  **Create a new branch:** For your changes, create a new branch in your fork, preferably with a descriptive name (e.g., `fix/audio-glitch`, `feature/new-board-support`).
+3.  **Make your changes:** Implement your bug fix or feature.
+    *   Ensure your code adheres to the [Google C++ Style Guide](#coding-style).
+    *   Add or update documentation as necessary.
+    *   If adding a new feature or fixing a significant bug, consider adding unit tests if applicable.
+4.  **Test your changes:** Thoroughly test your changes on the relevant hardware.
+5.  **Commit your changes:** Write clear and concise commit messages.
+6.  **Push to your fork:** Push your changes to your branch in your forked repository.
+7.  **Create a Pull Request (PR):** Open a pull request from your branch to the `main` branch of the original `78/xiaozhi-esp32` repository.
+    *   Provide a clear description of the changes in your PR.
+    *   Link to any relevant issues.
+
+**Code Reviews:**
+
+*   Your PR will be reviewed by maintainers. Be prepared to discuss your changes and make adjustments based on feedback.
+*   The project has a GitHub Actions workflow defined in `.github/workflows/build.yml` which may automatically build your changes to check for compilation errors. Ensure this workflow passes.
+
+Thank you for contributing to the Xiaozhi AI Chatbot project!
