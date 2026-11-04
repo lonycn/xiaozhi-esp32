@@ -18,6 +18,8 @@ int main() {
     assert(FromText("今天不开心") == Mood::Concerned);
     assert(FromText("别担心，我会帮你的") == Mood::Concerned);
     assert(FromText("谢谢，太棒了！") == Mood::Happy);
+    assert(FromText("笑死，我正在用300%音量大笑！") == Mood::Happy);
+    assert(FromText("给你一个微笑") == Mood::Happy);
     assert(FromText("让我想想，分析一下") == Mood::Thinking);
     assert(FromText("你是说那个吗？") == Mood::Curious);
     assert(FromText("哇，没想到！") == Mood::Surprised);

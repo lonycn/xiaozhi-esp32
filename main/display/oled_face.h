@@ -39,7 +39,8 @@ inline Mood FromText(std::string_view text) {
         return Mood::Surprised;
     if (Contains(text, {"😉", "嘿嘿", "开个玩笑"}))
         return Mood::Winking;
-    if (Contains(text, {"😊", "😄", "😂", "😆", "开心", "哈哈", "谢谢", "恭喜", "太棒了", "真棒"}))
+    if (Contains(text, {"😊", "😄", "😂", "😆", "开心", "哈哈", "笑死", "大笑", "微笑", "笑一笑",
+                        "谢谢", "恭喜", "太棒了", "真棒"}))
         return Mood::Happy;
     if (Contains(text, {"好奇", "为什么", "你是说", "怎么会", "？", "?"}))
         return Mood::Curious;
