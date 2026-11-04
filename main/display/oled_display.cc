@@ -18,6 +18,7 @@
 #include <esp_lvgl_port.h>
 #include <material_symbols.h>
 #include <noto_emoji.h>
+#include <src/misc/cache/instance/lv_image_cache.h>
 
 #define TAG "OledDisplay"
 
@@ -118,8 +119,10 @@ void OledDisplay::SetupUI() {
 OledDisplay::~OledDisplay() {
     if (idle_timer_ != nullptr)
         lv_timer_delete(idle_timer_);
-    if (idle_scene_ != nullptr)
+    if (idle_scene_ != nullptr) {
+        lv_image_cache_drop(&idle_clock_image_);
         lv_obj_delete(idle_scene_);
+    }
     if (content_ != nullptr) {
         lv_obj_del(content_);
     }
