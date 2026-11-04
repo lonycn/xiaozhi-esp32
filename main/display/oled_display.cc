@@ -1,4 +1,5 @@
 #include "oled_display.h"
+#include "application.h"
 #include "assets/lang_config.h"
 #include "lvgl_font.h"
 #include "lvgl_theme.h"
@@ -8,6 +9,8 @@
 #endif
 
 #include <algorithm>
+#include <cstring>
+#include <ctime>
 #include <string>
 
 #include <esp_err.h>
@@ -113,6 +116,10 @@ void OledDisplay::SetupUI() {
 }
 
 OledDisplay::~OledDisplay() {
+    if (idle_timer_ != nullptr)
+        lv_timer_delete(idle_timer_);
+    if (idle_scene_ != nullptr)
+        lv_obj_delete(idle_scene_);
     if (content_ != nullptr) {
         lv_obj_del(content_);
     }
@@ -403,6 +410,135 @@ void OledDisplay::SetupUI_128x32() {
     lv_obj_set_style_anim(chat_message_label_, &a, LV_PART_MAIN);
     lv_obj_set_style_anim_duration(chat_message_label_, lv_anim_speed_clamped(60, 300, 60000),
                                    LV_PART_MAIN);
+    // These panels are fixed-size. Overflow must not create a scrollbar at the OLED edge.
+    for (auto object : {screen, container_, content_, side_bar_, status_bar_}) {
+        lv_obj_set_scrollbar_mode(object, LV_SCROLLBAR_MODE_OFF);
+        lv_obj_remove_flag(object, LV_OBJ_FLAG_SCROLLABLE);
+    }
+    if (width_ == oled_idle::kWidth && height_ == oled_idle::kHeight)
+        SetupIdleScene();
+}
+
+void OledDisplay::SetupIdleScene() {
+    auto theme = static_cast<LvglTheme*>(current_theme_);
+    idle_scene_ = lv_obj_create(lv_screen_active());
+    lv_obj_remove_style_all(idle_scene_);
+    lv_obj_set_size(idle_scene_, width_, height_);
+    lv_obj_set_pos(idle_scene_, 0, 0);
+    lv_obj_set_scrollbar_mode(idle_scene_, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_remove_flag(idle_scene_, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(idle_scene_, LV_OBJ_FLAG_HIDDEN);
+
+    const uint32_t palette[] = {0xff000000, 0xffffffff};
+    std::memcpy(idle_pixels_.data(), palette, sizeof(palette));
+    idle_clock_image_.header.magic = LV_IMAGE_HEADER_MAGIC;
+    idle_clock_image_.header.cf = LV_COLOR_FORMAT_I1;
+    idle_clock_image_.header.w = width_;
+    idle_clock_image_.header.h = height_;
+    idle_clock_image_.header.stride = width_ / 8;
+    idle_clock_image_.data_size = idle_pixels_.size();
+    idle_clock_image_.data = idle_pixels_.data();
+    idle_clock_ = lv_image_create(idle_scene_);
+    lv_image_set_src(idle_clock_, &idle_clock_image_);
+
+    idle_face_ = lv_label_create(idle_scene_);
+    lv_obj_set_style_text_font(idle_face_, theme->emoji_font()->font(), 0);
+    lv_obj_set_style_text_color(idle_face_, lv_color_white(), 0);
+    lv_obj_set_pos(idle_face_, 1, 0);
+    lv_label_set_text(idle_face_, NOTO_EMOJI_HAPPY);
+
+    auto icon = [&](int x) {
+        auto label = lv_label_create(idle_scene_);
+        lv_obj_set_style_text_font(label, theme->icon_font()->font(), 0);
+        lv_obj_set_style_text_color(label, lv_color_white(), 0);
+        lv_obj_set_pos(label, x, 0);
+        lv_label_set_text(label, "");
+        return label;
+    };
+    idle_network_ = icon(112);
+    idle_mute_ = icon(96);
+    idle_battery_ = icon(80);
+    idle_timer_ = lv_timer_create(
+        [](lv_timer_t* timer) {
+            static_cast<OledDisplay*>(lv_timer_get_user_data(timer))->UpdateIdleScene();
+        },
+        200, this);
+    lv_timer_pause(idle_timer_);
+}
+
+void OledDisplay::UpdateIdleScene() {
+    if (idle_scene_ == nullptr)
+        return;
+    const auto status = lv_label_get_text(status_label_);
+    const bool clock_status = std::strlen(status) == 5 && status[2] == ':';
+    const bool visible = Application::GetInstance().GetDeviceState() == kDeviceStateIdle &&
+                         (clock_status || std::strcmp(status, Lang::Strings::STANDBY) == 0) &&
+                         lv_obj_has_flag(notification_label_, LV_OBJ_FLAG_HIDDEN);
+    if (visible != idle_visible_) {
+        idle_visible_ = visible;
+        if (visible) {
+            lv_obj_add_flag(container_, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_remove_flag(idle_scene_, LV_OBJ_FLAG_HIDDEN);
+            lv_timer_resume(idle_timer_);
+            idle_rendered_second_ = -1;
+        } else {
+            lv_obj_add_flag(idle_scene_, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_remove_flag(container_, LV_OBJ_FLAG_HIDDEN);
+            lv_timer_pause(idle_timer_);
+        }
+    }
+    if (!visible)
+        return;
+
+    const auto tick = lv_tick_get();
+    const char* face = NOTO_EMOJI_HAPPY;
+    switch (oled_idle::ExpressionAt(tick)) {
+        case oled_idle::Expression::Wink:
+            face = NOTO_EMOJI_WINKING;
+            break;
+        case oled_idle::Expression::Silly:
+            face = NOTO_EMOJI_SILLY;
+            break;
+        default:
+            break;
+    }
+    if (face != idle_face_text_) {
+        lv_label_set_text(idle_face_, face);
+        idle_face_text_ = face;
+    }
+    lv_obj_set_y(idle_face_, oled_idle::FaceOffsetAt(tick));
+
+    const auto now = std::time(nullptr);
+    if (now == idle_rendered_second_)
+        return;
+    idle_rendered_second_ = now;
+    struct tm local{};
+    localtime_r(&now, &local);
+    const bool valid = local.tm_year >= 2025 - 1900;
+    const auto pixels = oled_idle::Clock(valid ? local.tm_hour : -1, valid ? local.tm_min : -1,
+                                         !valid || local.tm_sec % 2 == 0);
+    std::copy(pixels.begin(), pixels.end(), idle_pixels_.begin() + 8);
+    lv_image_cache_drop(&idle_clock_image_);
+    lv_obj_invalidate(idle_clock_);
+    // A complete connected/offline icon stays recognizable at 14 px; the
+    // one-bar RSSI glyph otherwise looks like an unexplained single dot.
+    const bool offline =
+        network_icon_ == nullptr || std::strcmp(network_icon_, MATERIAL_SYMBOLS_WIFI_OFF) == 0;
+    lv_label_set_text(idle_network_, offline ? MATERIAL_SYMBOLS_WIFI_OFF : MATERIAL_SYMBOLS_WIFI);
+    lv_label_set_text(idle_mute_, muted_ ? MATERIAL_SYMBOLS_VOLUME_OFF : "");
+    lv_label_set_text(idle_battery_, lv_label_get_text(battery_label_));
+}
+
+void OledDisplay::SetStatus(const char* status) {
+    LvglDisplay::SetStatus(status);
+    DisplayLockGuard lock(this);
+    UpdateIdleScene();
+}
+
+void OledDisplay::UpdateStatusBar(bool update_all) {
+    LvglDisplay::UpdateStatusBar(update_all);
+    DisplayLockGuard lock(this);
+    UpdateIdleScene();
 }
 
 void OledDisplay::SetEmotion(const char* emotion) {
