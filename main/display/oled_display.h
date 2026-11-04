@@ -26,8 +26,8 @@ private:
     lv_obj_t* chat_message_label_ = nullptr;
     lv_obj_t* idle_scene_ = nullptr;
     lv_obj_t* idle_face_ = nullptr;
+    lv_obj_t* idle_blink_mask_ = nullptr;
     lv_obj_t* idle_clock_ = nullptr;
-    lv_obj_t* idle_network_ = nullptr;
     lv_obj_t* idle_mute_ = nullptr;
     lv_obj_t* idle_battery_ = nullptr;
     lv_timer_t* idle_timer_ = nullptr;
@@ -35,7 +35,6 @@ private:
     lv_image_dsc_t idle_clock_image_{};
     bool idle_visible_ = false;
     time_t idle_rendered_second_ = -1;
-    const char* idle_face_text_ = nullptr;
 
     virtual bool Lock(int timeout_ms = 0) override;
     virtual void Unlock() override;

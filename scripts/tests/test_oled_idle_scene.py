@@ -22,11 +22,11 @@ int main() {
                 for (int x = 0; x < 128; ++x) {
                     const int index = y * 16 + x / 8;
                     const auto mask = 0x80 >> (x % 8);
-                    if (x < 66 || x >= 124 || y < 13 || y >= 31)
+                    if (x < 36 || x >= 94 || y < 7 || y >= 25)
                         assert(!(on[index] & mask));
                     if ((on[index] ^ off[index]) & mask) {
-                        assert(x >= 94 && x < 96);
-                        assert((y >= 18 && y < 20) || (y >= 25 && y < 27));
+                        assert(x >= 64 && x < 66);
+                        assert((y >= 12 && y < 14) || (y >= 19 && y < 21));
                         ++changed;
                     }
                 }
@@ -36,12 +36,20 @@ int main() {
     }
     assert(oled_idle::Clock(-1, 0, true) == oled_idle::Clock(24, 60, true));
     assert(oled_idle::ExpressionAt(0) == oled_idle::Expression::Happy);
-    assert(oled_idle::ExpressionAt(3600) == oled_idle::Expression::Wink);
-    assert(oled_idle::ExpressionAt(4000) == oled_idle::Expression::Happy);
-    assert(oled_idle::ExpressionAt(7200) == oled_idle::Expression::Silly);
-    assert(oled_idle::ExpressionAt(8000) == oled_idle::Expression::Happy);
-    assert(oled_idle::FaceOffsetAt(7200) == -1);
-    assert(oled_idle::FaceOffsetAt(7600) == 0);
+    assert(oled_idle::ExpressionAt(3000) == oled_idle::Expression::Blink);
+    assert(oled_idle::ExpressionAt(3200) == oled_idle::Expression::Happy);
+    assert(oled_idle::ExpressionAt(3400) == oled_idle::Expression::Blink);
+    assert(oled_idle::ExpressionAt(3600) == oled_idle::Expression::Happy);
+    oled_idle::Pixels connected{};
+    oled_idle::Pixels offline{};
+    oled_idle::Wifi(connected, true);
+    oled_idle::Wifi(offline, false);
+    assert(connected != offline);
+    for (int y = 0; y < 32; ++y)
+        for (int x = 0; x < 128; ++x)
+            if (x < 113 || x > 125 || y < 9 || y > 21)
+                assert(!(offline[y * 16 + x / 8] & (0x80 >> (x % 8))));
+
 }
 '''
         compiler = shutil.which("c++")

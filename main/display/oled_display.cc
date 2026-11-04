@@ -432,7 +432,8 @@ void OledDisplay::SetupIdleScene() {
     lv_obj_remove_flag(idle_scene_, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(idle_scene_, LV_OBJ_FLAG_HIDDEN);
 
-    const uint32_t palette[] = {0xff000000, 0xffffffff};
+    // The monochrome port maps dark LVGL pixels to lit physical OLED pixels.
+    const uint32_t palette[] = {0xffffffff, 0xff000000};
     std::memcpy(idle_pixels_.data(), palette, sizeof(palette));
     idle_clock_image_.header.magic = LV_IMAGE_HEADER_MAGIC;
     idle_clock_image_.header.cf = LV_COLOR_FORMAT_I1;
@@ -446,21 +447,38 @@ void OledDisplay::SetupIdleScene() {
 
     idle_face_ = lv_label_create(idle_scene_);
     lv_obj_set_style_text_font(idle_face_, theme->emoji_font()->font(), 0);
-    lv_obj_set_style_text_color(idle_face_, lv_color_white(), 0);
-    lv_obj_set_pos(idle_face_, 1, 0);
+    lv_obj_set_style_text_color(idle_face_, lv_color_black(), 0);
+    // The font has a 38-pixel advance and a 30-pixel face. Center the glyph in 32 px.
+    lv_obj_set_pos(idle_face_, -3, 0);
     lv_label_set_text(idle_face_, NOTO_EMOJI_HAPPY);
 
-    auto icon = [&](int x) {
+    idle_blink_mask_ = lv_obj_create(idle_scene_);
+    lv_obj_remove_style_all(idle_blink_mask_);
+    lv_obj_set_pos(idle_blink_mask_, 7, 8);
+    lv_obj_set_size(idle_blink_mask_, 20, 8);
+    lv_obj_set_style_bg_color(idle_blink_mask_, lv_color_white(), 0);
+    lv_obj_set_style_bg_opa(idle_blink_mask_, LV_OPA_COVER, 0);
+    lv_obj_remove_flag(idle_blink_mask_, LV_OBJ_FLAG_SCROLLABLE);
+    for (int x : {2, 13}) {
+        auto eye = lv_obj_create(idle_blink_mask_);
+        lv_obj_remove_style_all(eye);
+        lv_obj_set_pos(eye, x, 4);
+        lv_obj_set_size(eye, 4, 1);
+        lv_obj_set_style_bg_color(eye, lv_color_black(), 0);
+        lv_obj_set_style_bg_opa(eye, LV_OPA_COVER, 0);
+    }
+    lv_obj_add_flag(idle_blink_mask_, LV_OBJ_FLAG_HIDDEN);
+
+    auto icon = [&](int x, int y) {
         auto label = lv_label_create(idle_scene_);
         lv_obj_set_style_text_font(label, theme->icon_font()->font(), 0);
-        lv_obj_set_style_text_color(label, lv_color_white(), 0);
-        lv_obj_set_pos(label, x, 0);
+        lv_obj_set_style_text_color(label, lv_color_black(), 0);
+        lv_obj_set_pos(label, x, y);
         lv_label_set_text(label, "");
         return label;
     };
-    idle_network_ = icon(112);
-    idle_mute_ = icon(96);
-    idle_battery_ = icon(80);
+    idle_mute_ = icon(96, 0);
+    idle_battery_ = icon(96, 18);
     idle_timer_ = lv_timer_create(
         [](lv_timer_t* timer) {
             static_cast<OledDisplay*>(lv_timer_get_user_data(timer))->UpdateIdleScene();
@@ -493,23 +511,11 @@ void OledDisplay::UpdateIdleScene() {
     if (!visible)
         return;
 
-    const auto tick = lv_tick_get();
-    const char* face = NOTO_EMOJI_HAPPY;
-    switch (oled_idle::ExpressionAt(tick)) {
-        case oled_idle::Expression::Wink:
-            face = NOTO_EMOJI_WINKING;
-            break;
-        case oled_idle::Expression::Silly:
-            face = NOTO_EMOJI_SILLY;
-            break;
-        default:
-            break;
-    }
-    if (face != idle_face_text_) {
-        lv_label_set_text(idle_face_, face);
-        idle_face_text_ = face;
-    }
-    lv_obj_set_y(idle_face_, oled_idle::FaceOffsetAt(tick));
+    const bool blink = oled_idle::ExpressionAt(lv_tick_get()) == oled_idle::Expression::Blink;
+    if (blink)
+        lv_obj_remove_flag(idle_blink_mask_, LV_OBJ_FLAG_HIDDEN);
+    else
+        lv_obj_add_flag(idle_blink_mask_, LV_OBJ_FLAG_HIDDEN);
 
     const auto now = std::time(nullptr);
     if (now == idle_rendered_second_)
@@ -518,16 +524,14 @@ void OledDisplay::UpdateIdleScene() {
     struct tm local{};
     localtime_r(&now, &local);
     const bool valid = local.tm_year >= 2025 - 1900;
-    const auto pixels = oled_idle::Clock(valid ? local.tm_hour : -1, valid ? local.tm_min : -1,
-                                         !valid || local.tm_sec % 2 == 0);
+    auto pixels = oled_idle::Clock(valid ? local.tm_hour : -1, valid ? local.tm_min : -1,
+                                   !valid || local.tm_sec % 2 == 0);
+    const bool offline =
+        network_icon_ == nullptr || std::strcmp(network_icon_, MATERIAL_SYMBOLS_WIFI_OFF) == 0;
+    oled_idle::Wifi(pixels, !offline);
     std::copy(pixels.begin(), pixels.end(), idle_pixels_.begin() + 8);
     lv_image_cache_drop(&idle_clock_image_);
     lv_obj_invalidate(idle_clock_);
-    // A complete connected/offline icon stays recognizable at 14 px; the
-    // one-bar RSSI glyph otherwise looks like an unexplained single dot.
-    const bool offline =
-        network_icon_ == nullptr || std::strcmp(network_icon_, MATERIAL_SYMBOLS_WIFI_OFF) == 0;
-    lv_label_set_text(idle_network_, offline ? MATERIAL_SYMBOLS_WIFI_OFF : MATERIAL_SYMBOLS_WIFI);
     lv_label_set_text(idle_mute_, muted_ ? MATERIAL_SYMBOLS_VOLUME_OFF : "");
     lv_label_set_text(idle_battery_, lv_label_get_text(battery_label_));
 }

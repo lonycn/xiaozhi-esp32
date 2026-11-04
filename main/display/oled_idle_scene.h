@@ -8,20 +8,13 @@ constexpr int kWidth = 128;
 constexpr int kHeight = 32;
 using Pixels = std::array<uint8_t, kWidth * kHeight / 8>;
 
-enum class Expression { Happy, Wink, Silly };
+enum class Expression { Happy, Blink };
 
 inline Expression ExpressionAt(uint32_t elapsed_ms) {
-    const auto phase = (elapsed_ms / 200) % 60;
-    if (phase >= 18 && phase < 20)
-        return Expression::Wink;
-    if (phase >= 36 && phase < 40)
-        return Expression::Silly;
+    const auto phase = (elapsed_ms / 200) % 50;
+    if (phase == 15 || phase == 17)
+        return Expression::Blink;
     return Expression::Happy;
-}
-
-inline int FaceOffsetAt(uint32_t elapsed_ms) {
-    const auto phase = (elapsed_ms / 200) % 60;
-    return phase >= 36 && phase < 38 ? -1 : 0;
 }
 
 inline void Rect(Pixels& pixels, int x, int y, int width, int height) {
@@ -56,14 +49,32 @@ inline void Digit(Pixels& pixels, int x, int y, int value) {
 inline Pixels Clock(int hour, int minute, bool colon_visible) {
     Pixels pixels{};
     const bool valid = hour >= 0 && hour < 24 && minute >= 0 && minute < 60;
-    Digit(pixels, 66, 13, valid ? hour / 10 : -1);
-    Digit(pixels, 78, 13, valid ? hour % 10 : -1);
-    Digit(pixels, 102, 13, valid ? minute / 10 : -1);
-    Digit(pixels, 114, 13, valid ? minute % 10 : -1);
+    Digit(pixels, 36, 7, valid ? hour / 10 : -1);
+    Digit(pixels, 48, 7, valid ? hour % 10 : -1);
+    Digit(pixels, 72, 7, valid ? minute / 10 : -1);
+    Digit(pixels, 84, 7, valid ? minute % 10 : -1);
     if (colon_visible) {
-        Rect(pixels, 94, 18, 2, 2);
-        Rect(pixels, 94, 25, 2, 2);
+        Rect(pixels, 64, 12, 2, 2);
+        Rect(pixels, 64, 19, 2, 2);
     }
     return pixels;
+}
+
+inline void Wifi(Pixels& pixels, bool connected) {
+    // Single-pixel strokes keep the small icon lighter than the font glyph.
+    Rect(pixels, 116, 10, 7, 1);
+    Rect(pixels, 114, 11, 2, 1);
+    Rect(pixels, 123, 11, 2, 1);
+    Rect(pixels, 113, 12, 1, 1);
+    Rect(pixels, 125, 12, 1, 1);
+    Rect(pixels, 117, 14, 5, 1);
+    Rect(pixels, 115, 15, 2, 1);
+    Rect(pixels, 122, 15, 2, 1);
+    Rect(pixels, 118, 18, 3, 1);
+    Rect(pixels, 119, 21, 1, 1);
+    if (!connected) {
+        for (int offset = 0; offset < 13; ++offset)
+            Rect(pixels, 113 + offset, 9 + offset, 1, 1);
+    }
 }
 }  // namespace oled_idle
