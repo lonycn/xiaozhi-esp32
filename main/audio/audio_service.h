@@ -143,6 +143,7 @@ public:
     void EnableVoiceProcessing(bool enable);
     void EnableAudioTesting(bool enable);
     void EnableDeviceAec(bool enable);
+    void SetPlaybackText(const std::string& text);
 
     void SetCallbacks(AudioServiceCallbacks& callbacks);
 

@@ -307,6 +307,12 @@ void AfeAudioEngine::EnableVoiceProcessing(bool enable) {
     UpdateActiveState();
 }
 
+void AfeAudioEngine::SetPlaybackText(const std::string& text) {
+    if (custom_wake_word_) {
+        custom_wake_word_->SetPlaybackText(text);
+    }
+}
+
 void AfeAudioEngine::EnableDeviceAec(bool enable) {
     device_aec_enabled_.store(enable);
     if (enable && (codec_ == nullptr || !codec_->input_reference())) {

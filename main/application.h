@@ -176,11 +176,13 @@ private:
     std::atomic<int64_t> protocol_healthy_since_{0};
     int64_t boot_started_ = 0;
     void InvalidatePlayback();
+    void FinishSpeakingIfDrained();
     void RequestCredentialRefresh();
     void StartCredentialRefresh();
     bool assets_version_checked_ = false;
     bool play_popup_on_listening_ = false;  // Flag to play popup sound after state changes to listening
     bool pending_listening_start_ = false;  // Waiting for playback to drain before starting listening (auto mode)
+    bool pending_speech_stop_ = false;
     int clock_ticks_ = 0;
     TaskHandle_t activation_task_handle_ = nullptr;
 

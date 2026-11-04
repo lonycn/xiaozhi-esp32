@@ -233,6 +233,7 @@ void Application::Run() {
 #endif
 
         if (bits & MAIN_EVENT_PLAYBACK_DRAINED) {
+            FinishSpeakingIfDrained();
             if (audio_service_.IsPlaybackIdle()) {
                 notify_player_.OnPlaybackDrained();
             }
@@ -800,6 +801,8 @@ void Application::InitializeProtocol() {
             if (strcmp(state->valuestring, "start") == 0) {
                 Schedule([this, epoch, turn, control]() {
                     if (!playback_fence_.Start(epoch, turn, control)) return;
+                    pending_speech_stop_ = false;
+                    audio_service_.SetPlaybackText("");
                     SetDeviceState(kDeviceStateSpeaking);
                     audio_service_.SetPlaybackExpected(true);
 #if CONFIG_XIAOZHI_USB_TEXT_CHAT
@@ -810,17 +813,9 @@ void Application::InitializeProtocol() {
             } else if (strcmp(state->valuestring, "stop") == 0) {
                 Schedule([this, epoch, turn, control]() {
                     if (!playback_fence_.Stop(epoch, turn, control)) return;
+                    pending_speech_stop_ = true;
                     audio_service_.SetPlaybackExpected(false);
-#if CONFIG_XIAOZHI_USB_TEXT_CHAT
-                    FinishRemoteText(true);
-#endif
-                    if (GetDeviceState() == kDeviceStateSpeaking) {
-                        if (listening_mode_ == kListeningModeManualStop) {
-                            SetDeviceState(kDeviceStateIdle);
-                        } else {
-                            SetDeviceState(kDeviceStateListening);
-                        }
-                    }
+                    FinishSpeakingIfDrained();
                 });
             } else if (strcmp(state->valuestring, "sentence_start") == 0) {
                 auto text = cJSON_GetObjectItem(root, "text");
@@ -834,6 +829,7 @@ void Application::InitializeProtocol() {
                     Schedule([this, display, message = std::string(text->valuestring),
                               glyphs = std::move(glyphs), bpp, epoch, turn, control]() {
                         if (!playback_fence_.Current(epoch, turn, control)) return;
+                        audio_service_.SetPlaybackText(message);
                         display->AddTextGlyphs(glyphs, bpp);
                         display->SetChatMessage("assistant", message.c_str());
 #if CONFIG_XIAOZHI_USB_TEXT_CHAT
@@ -1244,6 +1240,7 @@ void Application::HandleStateChangedEvent() {
     switch (new_state) {
         case kDeviceStateUnknown:
         case kDeviceStateIdle:
+            audio_service_.SetPlaybackText("");
             // Keep a just-raised network error visible. SetDeviceState(idle)
             // queues STATE_CHANGED after Alert(), and the idle handler would
             // otherwise wipe the status, emotion, and chat message.
@@ -1262,6 +1259,9 @@ void Application::HandleStateChangedEvent() {
             display->SetChatMessage("system", "");
             break;
         case kDeviceStateListening:
+            if (audio_service_.IsPlaybackIdle()) {
+                audio_service_.SetPlaybackText("");
+            }
 #if CONFIG_XIAOZHI_USB_TEXT_CHAT
             if (!remote_text_id_.empty()) {
                 display->SetStatus("等待回复");
@@ -1423,11 +1423,28 @@ void Application::Schedule(std::function<void()>&& callback) {
     xEventGroupSetBits(event_group_, MAIN_EVENT_SCHEDULE);
 }
 
+void Application::FinishSpeakingIfDrained() {
+    if (!pending_speech_stop_ || !audio_service_.IsPlaybackIdle()) {
+        return;
+    }
+    pending_speech_stop_ = false;
+    audio_service_.SetPlaybackText("");
+#if CONFIG_XIAOZHI_USB_TEXT_CHAT
+    FinishRemoteText(true);
+#endif
+    if (GetDeviceState() == kDeviceStateSpeaking) {
+        SetDeviceState(listening_mode_ == kListeningModeManualStop ? kDeviceStateIdle
+                                                                   : kDeviceStateListening);
+    }
+}
+
 void Application::InvalidatePlayback() {
     ++channel_request_epoch_;
     playback_fence_.Invalidate();
     audio_service_.SetPlaybackExpected(false);
     pending_listening_start_ = false;
+    pending_speech_stop_ = false;
+    audio_service_.SetPlaybackText("");
     play_popup_on_listening_ = false;
     audio_service_.ResetDecoder();
     audio_service_.DiscardInput();

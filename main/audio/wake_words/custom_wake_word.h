@@ -16,6 +16,7 @@
 #include <condition_variable>
 #include <atomic>
 
+#include "../playback_wake_filter.h"
 #include "audio_codec.h"
 #include "wake_word.h"
 #include "wake_word_audio_cache.h"
@@ -34,6 +35,7 @@ public:
     }
     void Start();
     void Stop();
+    void SetPlaybackText(const std::string& text);
     size_t GetFeedSize();
     void EncodeWakeWordData();
     bool GetWakeWordOpus(std::vector<uint8_t>& opus);
@@ -56,7 +58,8 @@ private:
     int duration_ = 3000;
     float threshold_ = 0.2;
     std::deque<Command> commands_;
- 
+    PlaybackWakeFilter playback_wake_filter_;
+
     std::function<void(const std::string& wake_word)> wake_word_detected_callback_;
     std::function<void(const std::string&, const std::string&)> voice_control_callback_;
     AudioCodec* codec_ = nullptr;

@@ -9,6 +9,7 @@
 #include <esp_mn_iface.h>
 #include <esp_mn_models.h>
 #include <esp_mn_speech_commands.h>
+#include <esp_timer.h>
 #include <cJSON.h>
 
 #define TAG "CustomWakeWord"
@@ -174,7 +175,13 @@ bool CustomWakeWord::Initialize(AudioCodec* codec, srmodel_list_t* models_list) 
         esp_mn_commands_add(i + 1, commands_[i].command.c_str());
     }
     esp_mn_commands_update();
-    
+    for (size_t i = 0; i < commands_.size(); ++i) {
+        if (commands_[i].action == "wake") {
+            playback_wake_filter_.Configure(i + 1, commands_[i].text);
+            break;
+        }
+    }
+
     multinet_->print_active_speech_commands(multinet_model_data_);
 #if CONFIG_SEND_WAKE_WORD_DATA
     if (!wake_word_audio_cache_.Initialize(16000 * 2)) {
@@ -186,6 +193,10 @@ bool CustomWakeWord::Initialize(AudioCodec* codec, srmodel_list_t* models_list) 
 
 void CustomWakeWord::OnWakeWordDetected(std::function<void(const std::string& wake_word)> callback) {
     wake_word_detected_callback_ = callback;
+}
+
+void CustomWakeWord::SetPlaybackText(const std::string& text) {
+    playback_wake_filter_.SetPlaybackText(text, esp_timer_get_time() / 1000);
 }
 
 void CustomWakeWord::Start() {
@@ -250,6 +261,9 @@ void CustomWakeWord::FeedSamples(const int16_t* data, size_t samples, bool mono)
 #endif
         if (mn_state == ESP_MN_STATE_DETECTED) {
             esp_mn_results_t *mn_result = multinet_->get_results(multinet_model_data_);
+            const bool playback_echo =
+                mn_result->num > 0 && playback_wake_filter_.Suppresses(mn_result->command_id[0],
+                                                                       esp_timer_get_time() / 1000);
             for (int i = 0; i < mn_result->num && running_; i++) {
                 ESP_LOGI(TAG, "Custom wake word detected: command_id=%d, string=%s, prob=%f", 
                         mn_result->command_id[i], mn_result->string, mn_result->prob[i]);
@@ -257,6 +271,10 @@ void CustomWakeWord::FeedSamples(const int16_t* data, size_t samples, bool mono)
                 if (index < 0 || index >= static_cast<int>(commands_.size()))
                     continue;
                 auto& command = commands_[index];
+                if (command.action == "wake" && playback_echo) {
+                    ESP_LOGI(TAG, "Ignored self-spoken wake word: %s", command.command.c_str());
+                    continue;
+                }
                 if (command.action == "wake") {
                     last_detected_wake_word_ = command.text;
                     running_ = false;

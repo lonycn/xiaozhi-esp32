@@ -794,6 +794,12 @@ void AudioService::EnableAudioTesting(bool enable) {
     }
 }
 
+void AudioService::SetPlaybackText(const std::string& text) {
+    if (audio_engine_) {
+        audio_engine_->SetPlaybackText(text);
+    }
+}
+
 void AudioService::EnableDeviceAec(bool enable) {
     ESP_LOGI(TAG, "%s device AEC", enable ? "Enabling" : "Disabling");
     device_aec_enabled_ = enable;
