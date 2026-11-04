@@ -2,6 +2,7 @@
 #define OLED_DISPLAY_H
 
 #include "lvgl_display.h"
+#include "oled_face.h"
 #include "oled_idle_scene.h"
 
 #include <array>
@@ -26,13 +27,17 @@ private:
     lv_obj_t* chat_message_label_ = nullptr;
     lv_obj_t* idle_scene_ = nullptr;
     lv_obj_t* idle_face_ = nullptr;
-    lv_obj_t* idle_blink_mask_ = nullptr;
+    lv_obj_t* conversation_face_ = nullptr;
     lv_obj_t* idle_clock_ = nullptr;
     lv_obj_t* idle_mute_ = nullptr;
     lv_obj_t* idle_battery_ = nullptr;
     lv_timer_t* idle_timer_ = nullptr;
     alignas(4) std::array<uint8_t, 8 + oled_idle::kWidth * oled_idle::kHeight / 8> idle_pixels_{};
     lv_image_dsc_t idle_clock_image_{};
+    alignas(4) std::array<uint8_t, 8 + oled_face::Pixels{}.size()> face_pixels_{};
+    lv_image_dsc_t face_image_{};
+    oled_face::Animator face_animator_;
+    int face_device_state_ = -1;
     bool idle_visible_ = false;
     time_t idle_rendered_second_ = -1;
 
@@ -43,6 +48,7 @@ private:
     void SetupUI_128x32();
     void SetupIdleScene();
     void UpdateIdleScene();
+    void UpdateFace();
 
 public:
     OledDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_handle_t panel, int width,

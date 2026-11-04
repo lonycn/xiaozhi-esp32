@@ -8,15 +8,6 @@ constexpr int kWidth = 128;
 constexpr int kHeight = 32;
 using Pixels = std::array<uint8_t, kWidth * kHeight / 8>;
 
-enum class Expression { Happy, Blink };
-
-inline Expression ExpressionAt(uint32_t elapsed_ms) {
-    const auto phase = (elapsed_ms / 200) % 50;
-    if (phase == 15 || phase == 17)
-        return Expression::Blink;
-    return Expression::Happy;
-}
-
 inline void Rect(Pixels& pixels, int x, int y, int width, int height) {
     for (int row = y; row < y + height; ++row) {
         for (int col = x; col < x + width; ++col) {

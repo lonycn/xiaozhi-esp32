@@ -35,11 +35,6 @@ int main() {
         }
     }
     assert(oled_idle::Clock(-1, 0, true) == oled_idle::Clock(24, 60, true));
-    assert(oled_idle::ExpressionAt(0) == oled_idle::Expression::Happy);
-    assert(oled_idle::ExpressionAt(3000) == oled_idle::Expression::Blink);
-    assert(oled_idle::ExpressionAt(3200) == oled_idle::Expression::Happy);
-    assert(oled_idle::ExpressionAt(3400) == oled_idle::Expression::Blink);
-    assert(oled_idle::ExpressionAt(3600) == oled_idle::Expression::Happy);
     oled_idle::Pixels connected{};
     oled_idle::Pixels offline{};
     oled_idle::Wifi(connected, true);

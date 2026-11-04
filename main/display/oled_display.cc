@@ -121,6 +121,7 @@ OledDisplay::~OledDisplay() {
         lv_timer_delete(idle_timer_);
     if (idle_scene_ != nullptr) {
         lv_image_cache_drop(&idle_clock_image_);
+        lv_image_cache_drop(&face_image_);
         lv_obj_delete(idle_scene_);
     }
     if (content_ != nullptr) {
@@ -176,14 +177,27 @@ void OledDisplay::SetChatMessage(const char* role, const char* content) {
     }
 
     // Replace all newlines with spaces
-    std::string content_str = content;
+    std::string content_str = content ? content : "";
     std::replace(content_str.begin(), content_str.end(), '\n', ' ');
+
+    if (idle_scene_ != nullptr && role != nullptr && !content_str.empty()) {
+        UpdateIdleScene();
+        const auto state = Application::GetInstance().GetDeviceState();
+        if (std::strcmp(role, "user") == 0 && state == kDeviceStateListening) {
+            face_animator_.SetMode(oled_face::Mode::Thinking, lv_tick_get());
+        } else if (std::strcmp(role, "assistant") == 0 && state == kDeviceStateSpeaking) {
+            face_animator_.SetReply(content_str, lv_tick_get());
+            ESP_LOGI(TAG, "Micro expression: %s (reply text)",
+                     oled_face::Name(face_animator_.mood()));
+        }
+        UpdateFace();
+    }
 
     lv_anim_delete(chat_message_label_, nullptr);
     if (content_right_ == nullptr) {
         lv_label_set_text(chat_message_label_, content_str.c_str());
     } else {
-        if (content == nullptr || content[0] == '\0') {
+        if (content_str.empty()) {
             lv_obj_add_flag(content_right_, LV_OBJ_FLAG_HIDDEN);
         } else {
             lv_label_set_text(chat_message_label_, content_str.c_str());
@@ -445,29 +459,20 @@ void OledDisplay::SetupIdleScene() {
     idle_clock_ = lv_image_create(idle_scene_);
     lv_image_set_src(idle_clock_, &idle_clock_image_);
 
-    idle_face_ = lv_label_create(idle_scene_);
-    lv_obj_set_style_text_font(idle_face_, theme->emoji_font()->font(), 0);
-    lv_obj_set_style_text_color(idle_face_, lv_color_black(), 0);
-    // The font has a 38-pixel advance and a 30-pixel face. Center the glyph in 32 px.
-    lv_obj_set_pos(idle_face_, -3, 0);
-    lv_label_set_text(idle_face_, NOTO_EMOJI_HAPPY);
-
-    idle_blink_mask_ = lv_obj_create(idle_scene_);
-    lv_obj_remove_style_all(idle_blink_mask_);
-    lv_obj_set_pos(idle_blink_mask_, 7, 8);
-    lv_obj_set_size(idle_blink_mask_, 20, 8);
-    lv_obj_set_style_bg_color(idle_blink_mask_, lv_color_white(), 0);
-    lv_obj_set_style_bg_opa(idle_blink_mask_, LV_OPA_COVER, 0);
-    lv_obj_remove_flag(idle_blink_mask_, LV_OBJ_FLAG_SCROLLABLE);
-    for (int x : {2, 13}) {
-        auto eye = lv_obj_create(idle_blink_mask_);
-        lv_obj_remove_style_all(eye);
-        lv_obj_set_pos(eye, x, 4);
-        lv_obj_set_size(eye, 4, 1);
-        lv_obj_set_style_bg_color(eye, lv_color_black(), 0);
-        lv_obj_set_style_bg_opa(eye, LV_OPA_COVER, 0);
-    }
-    lv_obj_add_flag(idle_blink_mask_, LV_OBJ_FLAG_HIDDEN);
+    std::memcpy(face_pixels_.data(), palette, sizeof(palette));
+    face_image_.header.magic = LV_IMAGE_HEADER_MAGIC;
+    face_image_.header.cf = LV_COLOR_FORMAT_I1;
+    face_image_.header.w = oled_face::kSize;
+    face_image_.header.h = oled_face::kSize;
+    face_image_.header.stride = oled_face::kSize / 8;
+    face_image_.data_size = face_pixels_.size();
+    face_image_.data = face_pixels_.data();
+    idle_face_ = lv_image_create(idle_scene_);
+    lv_image_set_src(idle_face_, &face_image_);
+    conversation_face_ = lv_image_create(content_);
+    lv_image_set_src(conversation_face_, &face_image_);
+    lv_obj_set_pos(conversation_face_, 0, 0);
+    lv_obj_add_flag(conversation_face_, LV_OBJ_FLAG_HIDDEN);
 
     auto icon = [&](int x, int y) {
         auto label = lv_label_create(idle_scene_);
@@ -483,16 +488,30 @@ void OledDisplay::SetupIdleScene() {
         [](lv_timer_t* timer) {
             static_cast<OledDisplay*>(lv_timer_get_user_data(timer))->UpdateIdleScene();
         },
-        200, this);
+        160, this);
     lv_timer_pause(idle_timer_);
 }
 
 void OledDisplay::UpdateIdleScene() {
     if (idle_scene_ == nullptr)
         return;
+    const auto state = Application::GetInstance().GetDeviceState();
+    if (face_device_state_ != state) {
+        face_device_state_ = state;
+        auto mode = oled_face::Mode::Disabled;
+        if (state == kDeviceStateIdle)
+            mode = oled_face::Mode::Idle;
+        else if (state == kDeviceStateConnecting)
+            mode = oled_face::Mode::Thinking;
+        else if (state == kDeviceStateListening)
+            mode = oled_face::Mode::Listening;
+        else if (state == kDeviceStateSpeaking)
+            mode = oled_face::Mode::Speaking;
+        face_animator_.SetMode(mode, lv_tick_get());
+    }
     const auto status = lv_label_get_text(status_label_);
     const bool clock_status = std::strlen(status) == 5 && status[2] == ':';
-    const bool visible = Application::GetInstance().GetDeviceState() == kDeviceStateIdle &&
+    const bool visible = state == kDeviceStateIdle &&
                          (clock_status || std::strcmp(status, Lang::Strings::STANDBY) == 0) &&
                          lv_obj_has_flag(notification_label_, LV_OBJ_FLAG_HIDDEN);
     if (visible != idle_visible_) {
@@ -500,22 +519,29 @@ void OledDisplay::UpdateIdleScene() {
         if (visible) {
             lv_obj_add_flag(container_, LV_OBJ_FLAG_HIDDEN);
             lv_obj_remove_flag(idle_scene_, LV_OBJ_FLAG_HIDDEN);
-            lv_timer_resume(idle_timer_);
             idle_rendered_second_ = -1;
         } else {
             lv_obj_add_flag(idle_scene_, LV_OBJ_FLAG_HIDDEN);
             lv_obj_remove_flag(container_, LV_OBJ_FLAG_HIDDEN);
-            lv_timer_pause(idle_timer_);
         }
+    }
+    const bool conversation = state == kDeviceStateListening || state == kDeviceStateSpeaking ||
+                              state == kDeviceStateConnecting;
+    if (conversation) {
+        lv_obj_add_flag(emotion_label_, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_remove_flag(conversation_face_, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_remove_flag(emotion_label_, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(conversation_face_, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (visible || conversation) {
+        lv_timer_resume(idle_timer_);
+        UpdateFace();
+    } else {
+        lv_timer_pause(idle_timer_);
     }
     if (!visible)
         return;
-
-    const bool blink = oled_idle::ExpressionAt(lv_tick_get()) == oled_idle::Expression::Blink;
-    if (blink)
-        lv_obj_remove_flag(idle_blink_mask_, LV_OBJ_FLAG_HIDDEN);
-    else
-        lv_obj_add_flag(idle_blink_mask_, LV_OBJ_FLAG_HIDDEN);
 
     const auto now = std::time(nullptr);
     if (now == idle_rendered_second_)
@@ -534,6 +560,16 @@ void OledDisplay::UpdateIdleScene() {
     lv_obj_invalidate(idle_clock_);
     lv_label_set_text(idle_mute_, muted_ ? MATERIAL_SYMBOLS_VOLUME_OFF : "");
     lv_label_set_text(idle_battery_, lv_label_get_text(battery_label_));
+}
+
+void OledDisplay::UpdateFace() {
+    const auto pixels = oled_face::Render(face_animator_.At(lv_tick_get()));
+    if (std::equal(pixels.begin(), pixels.end(), face_pixels_.begin() + 8))
+        return;
+    std::copy(pixels.begin(), pixels.end(), face_pixels_.begin() + 8);
+    lv_image_cache_drop(&face_image_);
+    lv_obj_invalidate(idle_face_);
+    lv_obj_invalidate(conversation_face_);
 }
 
 void OledDisplay::SetStatus(const char* status) {
@@ -559,6 +595,12 @@ void OledDisplay::SetEmotion(const char* emotion) {
     DisplayLockGuard lock(this);
     if (emotion_label_ == nullptr) {
         return;
+    }
+    const auto state = Application::GetInstance().GetDeviceState();
+    if (idle_scene_ != nullptr && emotion != nullptr &&
+        (state == kDeviceStateSpeaking || state == kDeviceStateListening)) {
+        face_animator_.SetEmotion(emotion, lv_tick_get());
+        UpdateFace();
     }
     if (utf8 != nullptr) {
         lv_obj_set_style_text_font(emotion_label_, emotion_font, 0);
