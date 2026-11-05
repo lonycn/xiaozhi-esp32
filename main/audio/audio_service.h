@@ -82,6 +82,7 @@
 struct AudioServiceCallbacks {
     std::function<void(void)> on_send_queue_available;
     std::function<void(const std::string&)> on_wake_word_detected;
+    std::function<void(const std::string&, const std::string&)> on_voice_control;
     std::function<void(bool)> on_vad_change;
     std::function<void(void)> on_audio_testing_queue_full;
     // Fired when the decode/playback queues and their in-flight work are drained.
@@ -99,6 +100,7 @@ struct AudioTask {
     AudioTaskType type;
     std::vector<int16_t> pcm;
     uint32_t timestamp = 0;
+    uint32_t generation = 0;
     uint32_t playback_id = 0;
     uint32_t media_position_ms = 0;
 };
@@ -124,6 +126,9 @@ public:
     const std::string& GetLastWakeWord() const;
     bool IsVoiceDetected() const { return voice_detected_; }
     bool IsIdle();
+    bool IsReady() const { return audio_engine_initialized_ && opus_encoder_ && opus_decoder_ && !service_stopped_.load(); }
+    void SetPlaybackExpected(bool expected) { playback_expected_.store(expected); }
+    void LogPlaybackStatistics();
     bool IsPlaybackIdle();
     bool IsWakeWordRunning() const {
         return xEventGroupGetBits(event_group_) & AS_EVENT_WAKE_WORD_RUNNING;
@@ -138,10 +143,13 @@ public:
     void EnableVoiceProcessing(bool enable);
     void EnableAudioTesting(bool enable);
     void EnableDeviceAec(bool enable);
+    void SetPlaybackText(const std::string& text);
 
     void SetCallbacks(AudioServiceCallbacks& callbacks);
 
-    bool PushPacketToDecodeQueue(std::unique_ptr<AudioStreamPacket> packet, bool wait = false);
+    bool PushPacketToDecodeQueue(std::unique_ptr<AudioStreamPacket> packet, bool wait = false, uint32_t expected_generation = UINT32_MAX);
+    uint32_t PlaybackGeneration();
+    void DiscardInput();
     std::unique_ptr<AudioStreamPacket> PopPacketFromSendQueue();
     void PlaySound(const std::string_view& sound);
     bool ReadAudioData(std::vector<int16_t>& data, int sample_rate, int samples);
@@ -194,6 +202,11 @@ private:
     bool output_in_flight_ = false;
     bool playback_drained_notified_ = true;
     uint32_t playback_generation_ = 0;
+    uint32_t input_generation_ = 0;
+    std::atomic<bool> decoder_reset_pending_{false};
+    std::atomic<bool> playback_expected_{false};
+    std::atomic<uint32_t> downlink_drops_{0}, starvation_events_{0}, decoder_errors_{0};
+    std::atomic<uint32_t> decode_max_us_{0}, output_max_us_{0};
     // For server AEC
     FixedQueue<uint32_t, MAX_TIMESTAMPS_IN_QUEUE> timestamp_queue_;
 

@@ -74,10 +74,14 @@ class CiSelectionTests(unittest.TestCase):
             self.variants,
             ["main/application.cc", "main/boards/bread-compact-wifi/config.h"],
         )
-        self.assertEqual(len(selected), 19)
+        self.assertEqual(len(selected), 26)
         self.assertEqual(
             sorted(v["name"] for v in selected if v["board"] == "bread-compact-wifi"),
-            ["bread-compact-wifi", "bread-compact-wifi-128x64"],
+            ["bread-compact-wifi", "bread-compact-wifi-128x32-ai-lan", "bread-compact-wifi-128x32-ai-release", "bread-compact-wifi-128x32-usb-mirror",
+             "bread-compact-wifi-128x32-usb-mirror-devmac",
+             "bread-compact-wifi-128x32-usb-mirror-devmac-daleng",
+             "bread-compact-wifi-128x32-usb-mirror-devmac-daleng-diag", "bread-compact-wifi-128x64",
+             "bread-compact-wifi-128x64-usb-mirror"],
         )
 
     def test_ethernet_does_not_replace_changed_boards_wifi_variants(self):

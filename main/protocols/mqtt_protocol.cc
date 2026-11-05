@@ -1,4 +1,5 @@
 #include "mqtt_protocol.h"
+#include "audio_wire_validation.h"
 #include "application.h"
 #include "board.h"
 #include "settings.h"
@@ -323,7 +324,7 @@ bool MqttProtocol::OpenAudioChannel() {
         payload_len = ntohs(payload_len);
         timestamp = ntohl(timestamp);
         sequence = ntohl(sequence);
-        if (data.size() != kAudioHeaderSize + payload_len) {
+        if (payload_len == 0 || payload_len > audio_wire::kMaxOpusBytes || data.size() != kAudioHeaderSize + payload_len) {
             ESP_LOGE(TAG, "Audio payload length mismatch: header=%u, datagram=%zu",
                      static_cast<unsigned>(payload_len), data.size() - kAudioHeaderSize);
             return;

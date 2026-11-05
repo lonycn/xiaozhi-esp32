@@ -1,12 +1,15 @@
 #include "custom_wake_word.h"
+#include "../voice_control_commands.h"
+#include "assets.h"
+#include "audio_diagnostics.h"
 #include "audio_service.h"
 #include "system_info.h"
-#include "assets.h"
 
 #include <esp_log.h>
 #include <esp_mn_iface.h>
 #include <esp_mn_models.h>
 #include <esp_mn_speech_commands.h>
+#include <esp_timer.h>
 #include <cJSON.h>
 
 #define TAG "CustomWakeWord"
@@ -92,7 +95,44 @@ bool CustomWakeWord::Initialize(AudioCodec* codec, srmodel_list_t* models_list) 
         owns_models_ = models_ != nullptr;
 #ifdef CONFIG_CUSTOM_WAKE_WORD
         threshold_ = CONFIG_CUSTOM_WAKE_WORD_THRESHOLD / 100.0f;
-        commands_.push_back({CONFIG_CUSTOM_WAKE_WORD, CONFIG_CUSTOM_WAKE_WORD_DISPLAY, "wake"});
+        auto add_phrase = [this](const std::string& phrase) {
+            std::string normalized;
+            bool pending_space = false;
+            for (char ch : phrase) {
+                if (ch == ' ' || ch == '\t' || ch == '\r' || ch == '\n' || ch == '\f' ||
+                    ch == '\v') {
+                    pending_space = !normalized.empty();
+                } else {
+                    if (pending_space) {
+                        normalized += ' ';
+                    }
+                    normalized += ch;
+                    pending_space = false;
+                }
+            }
+            if (normalized.empty()) {
+                return;
+            }
+            for (const auto& command : commands_) {
+                if (command.command == normalized) {
+                    return;
+                }
+            }
+            commands_.push_back({normalized, CONFIG_CUSTOM_WAKE_WORD_DISPLAY, "wake"});
+        };
+        add_phrase(CONFIG_CUSTOM_WAKE_WORD);
+#ifdef CONFIG_CUSTOM_WAKE_WORD_ALIASES
+        const std::string aliases = CONFIG_CUSTOM_WAKE_WORD_ALIASES;
+        size_t start = 0;
+        while (start <= aliases.size()) {
+            size_t end = aliases.find(';', start);
+            add_phrase(aliases.substr(start, end == std::string::npos ? end : end - start));
+            if (end == std::string::npos) {
+                break;
+            }
+            start = end + 1;
+        }
+#endif
 #endif
     } else {
         models_ = models_list;
@@ -120,12 +160,28 @@ bool CustomWakeWord::Initialize(AudioCodec* codec, srmodel_list_t* models_list) 
     multinet_model_data_ = multinet_->create(mn_name_, duration_);
     multinet_->set_det_threshold(multinet_model_data_, threshold_);
     input_buffer_.reserve(multinet_->get_samp_chunksize(multinet_model_data_));
+#if CONFIG_XIAOZHI_CONTROLLED_RELEASE
+    for (const auto& control : voice_controls::kCommands) {
+        bool duplicate = false;
+        for (const auto& command : commands_)
+            if (command.command == control.pinyin)
+                duplicate = true;
+        if (!duplicate)
+            commands_.push_back({control.pinyin, control.text, control.action});
+    }
+#endif
     esp_mn_commands_clear();
     for (int i = 0; i < commands_.size(); i++) {
         esp_mn_commands_add(i + 1, commands_[i].command.c_str());
     }
     esp_mn_commands_update();
-    
+    for (size_t i = 0; i < commands_.size(); ++i) {
+        if (commands_[i].action == "wake") {
+            playback_wake_filter_.Configure(i + 1, commands_[i].text);
+            break;
+        }
+    }
+
     multinet_->print_active_speech_commands(multinet_model_data_);
 #if CONFIG_SEND_WAKE_WORD_DATA
     if (!wake_word_audio_cache_.Initialize(16000 * 2)) {
@@ -139,11 +195,21 @@ void CustomWakeWord::OnWakeWordDetected(std::function<void(const std::string& wa
     wake_word_detected_callback_ = callback;
 }
 
+void CustomWakeWord::SetPlaybackText(const std::string& text) {
+    playback_wake_filter_.SetPlaybackText(text, esp_timer_get_time() / 1000);
+}
+
 void CustomWakeWord::Start() {
+#if CONFIG_XIAOZHI_AUDIO_DIAGNOSTICS
+    ESP_LOGI(TAG, "MultiNet start");
+#endif
     running_ = true;
 }
 
 void CustomWakeWord::Stop() {
+#if CONFIG_XIAOZHI_AUDIO_DIAGNOSTICS
+    ESP_LOGI(TAG, "MultiNet stop");
+#endif
     running_ = false;
 
     std::lock_guard<std::mutex> lock(input_buffer_mutex_);
@@ -185,13 +251,30 @@ void CustomWakeWord::FeedSamples(const int16_t* data, size_t samples, bool mono)
 #endif
 
         esp_mn_state_t mn_state = multinet_->detect(multinet_model_data_, input_buffer_.data());
-        
+
+#if CONFIG_XIAOZHI_AUDIO_DIAGNOSTICS
+        static audio_diagnostics::Window diagnostics;
+        diagnostics.Record("multinet-detect", nullptr, 0, true, 0, mn_state == ESP_MN_STATE_TIMEOUT,
+                           mn_state == ESP_MN_STATE_DETECTED
+                               ? multinet_->get_results(multinet_model_data_)->num
+                               : 0);
+#endif
         if (mn_state == ESP_MN_STATE_DETECTED) {
             esp_mn_results_t *mn_result = multinet_->get_results(multinet_model_data_);
+            const bool playback_echo =
+                mn_result->num > 0 && playback_wake_filter_.Suppresses(mn_result->command_id[0],
+                                                                       esp_timer_get_time() / 1000);
             for (int i = 0; i < mn_result->num && running_; i++) {
                 ESP_LOGI(TAG, "Custom wake word detected: command_id=%d, string=%s, prob=%f", 
                         mn_result->command_id[i], mn_result->string, mn_result->prob[i]);
-                auto& command = commands_[mn_result->command_id[i] - 1];
+                const int index = mn_result->command_id[i] - 1;
+                if (index < 0 || index >= static_cast<int>(commands_.size()))
+                    continue;
+                auto& command = commands_[index];
+                if (command.action == "wake" && playback_echo) {
+                    ESP_LOGI(TAG, "Ignored self-spoken wake word: %s", command.command.c_str());
+                    continue;
+                }
                 if (command.action == "wake") {
                     last_detected_wake_word_ = command.text;
                     running_ = false;
@@ -200,6 +283,13 @@ void CustomWakeWord::FeedSamples(const int16_t* data, size_t samples, bool mono)
                     if (wake_word_detected_callback_) {
                         wake_word_detected_callback_(last_detected_wake_word_);
                     }
+                } else if (command.action == "stop" || command.action == "exit") {
+                    running_ = false;
+                    input_buffer_.clear();
+                    multinet_->clean(multinet_model_data_);
+                    if (voice_control_callback_)
+                        voice_control_callback_(command.action, command.text);
+                    return;  // Main-loop acknowledgement may already re-enable detection.
                 }
             }
             multinet_->clean(multinet_model_data_);

@@ -6,17 +6,19 @@
 #include <freertos/task.h>
 #include <esp_timer.h>
 
-#include <string>
-#include <mutex>
-#include <deque>
-#include <memory>
-#include <functional>
+#include <atomic>
 #include <cstdint>
+#include <deque>
+#include <functional>
+#include <memory>
+#include <mutex>
+#include <string>
 #include <vector>
 
 #include "protocol.h"
 #include "ota.h"
 #include "audio_service.h"
+#include "audio/playback_fence.h"
 #include "device_state.h"
 #include "device_state_machine.h"
 #include "notify/notify_player.h"
@@ -89,6 +91,7 @@ public:
     void DismissAlert();
 
     void AbortSpeaking(AbortReason reason);
+    void HandleVoiceControl(const std::string& action, const std::string& text, bool notify_server);
 
     /**
      * Toggle chat state (event-based, thread-safe)
@@ -113,6 +116,11 @@ public:
     bool UpgradeFirmware(const std::string& url, const std::string& version = "");
     bool CanEnterSleepMode();
     void SendMcpMessage(const std::string& payload);
+#if CONFIG_XIAOZHI_USB_TEXT_CHAT
+    void SubmitRemoteText(const std::string& id, const std::string& text);
+    void SubmitRemoteAudio(const std::string& id, std::vector<uint8_t> payload);
+    void CompleteRemoteAudio(const std::string& id);
+#endif
     void RegisterMcpBroadcastCallback(std::function<void(const std::string&)> callback);
     void SetAecMode(AecMode mode);
     AecMode GetAecMode() const { return aec_mode_; }
@@ -127,12 +135,18 @@ public:
     void ResetProtocol();
 
 private:
+#if CONFIG_XIAOZHI_USB_TEXT_CHAT
+    std::string remote_text_id_;
+    int64_t remote_text_deadline_ = 0;
+    std::atomic<int> remote_audio_pending_{0};
+    void FinishRemoteText(bool success, const std::string& message = "");
+#endif
     Application();
     ~Application();
 
     std::mutex mutex_;
     std::deque<std::function<void()>> main_tasks_;
-    std::unique_ptr<Protocol> protocol_;
+    std::shared_ptr<Protocol> protocol_;
     EventGroupHandle_t event_group_ = nullptr;
     esp_timer_handle_t clock_timer_handle_ = nullptr;
     DeviceStateMachine state_machine_;
@@ -147,10 +161,28 @@ private:
     std::function<void(const std::string&)> mcp_broadcast_callback_;
 
     bool has_server_time_ = false;
-    bool aborted_ = false;
+    PlaybackFence playback_fence_;
+    std::atomic<bool> channel_open_running_{false};
+    std::atomic<unsigned> abort_commands_{0};
+    std::atomic<uint32_t> protocol_epoch_{0};
+    std::atomic<uint32_t> channel_request_epoch_{0};
+    void OpenAudioChannelAsync(std::function<void(bool)> complete);
+    std::atomic<bool> credential_refresh_running_{false};
+    std::atomic<bool> upgrade_running_{false};
+    bool PerformFirmwareUpgrade(const std::string& url, const std::string& version);
+    std::atomic<bool> credential_refresh_pending_{false};
+    int credential_refresh_attempt_ = 0;
+    int64_t credential_refresh_due_ = 0;
+    std::atomic<int64_t> protocol_healthy_since_{0};
+    int64_t boot_started_ = 0;
+    void InvalidatePlayback();
+    void FinishSpeakingIfDrained();
+    void RequestCredentialRefresh();
+    void StartCredentialRefresh();
     bool assets_version_checked_ = false;
     bool play_popup_on_listening_ = false;  // Flag to play popup sound after state changes to listening
     bool pending_listening_start_ = false;  // Waiting for playback to drain before starting listening (auto mode)
+    bool pending_speech_stop_ = false;
     int clock_ticks_ = 0;
     TaskHandle_t activation_task_handle_ = nullptr;
 

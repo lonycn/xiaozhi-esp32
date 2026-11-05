@@ -1,4 +1,5 @@
 #include "application.h"
+#include <new>
 #include "assets.h"
 #include "assets/lang_config.h"
 #include "audio_codec.h"
@@ -11,6 +12,9 @@
 #include "system_info.h"
 #include "text_glyph_payload.h"
 #include "websocket_protocol.h"
+#if CONFIG_XIAOZHI_USB_TEXT_CHAT
+#include "display/usb_text_chat.h"
+#endif
 
 #include <driver/gpio.h>
 #include <esp_log.h>
@@ -81,6 +85,9 @@ void Application::Initialize() {
     };
     callbacks.on_wake_word_detected = [this](const std::string& wake_word) {
         xEventGroupSetBits(event_group_, MAIN_EVENT_WAKE_WORD_DETECTED);
+    };
+    callbacks.on_voice_control = [this](const std::string& action, const std::string& text) {
+        Schedule([this, action, text]() { HandleVoiceControl(action, text, true); });
     };
     callbacks.on_vad_change = [this](bool speaking) {
         xEventGroupSetBits(event_group_, MAIN_EVENT_VAD_CHANGE);
@@ -188,6 +195,10 @@ void Application::Run() {
         auto bits = xEventGroupWaitBits(event_group_, ALL_EVENTS, pdTRUE, pdFALSE, portMAX_DELAY);
 
         if (bits & MAIN_EVENT_ERROR) {
+            InvalidatePlayback();
+#if CONFIG_XIAOZHI_USB_TEXT_CHAT
+            FinishRemoteText(false, last_error_message_);
+#endif
             if (GetDeviceState() == kDeviceStateNotifying) {
                 StopNotification();
             }
@@ -211,8 +222,18 @@ void Application::Run() {
         if (bits & MAIN_EVENT_STATE_CHANGED) {
             HandleStateChangedEvent();
         }
+#if CONFIG_XIAOZHI_USB_TEXT_CHAT
+        if ((bits & MAIN_EVENT_CLOCK_TICK) && !remote_text_id_.empty() &&
+            esp_timer_get_time() > remote_text_deadline_) {
+            FinishRemoteText(false, "等待服务器回复超时");
+            if (protocol_)
+                protocol_->CloseAudioChannel();
+            SetDeviceState(kDeviceStateIdle);
+        }
+#endif
 
         if (bits & MAIN_EVENT_PLAYBACK_DRAINED) {
+            FinishSpeakingIfDrained();
             if (audio_service_.IsPlaybackIdle()) {
                 notify_player_.OnPlaybackDrained();
             }
@@ -238,6 +259,8 @@ void Application::Run() {
         }
 
         if (bits & MAIN_EVENT_SEND_AUDIO) {
+            if (GetDeviceState() != kDeviceStateListening || !audio_service_.IsAudioProcessorRunning() ||
+                credential_refresh_running_.load() || upgrade_running_.load()) audio_service_.DiscardInput();
             while (auto packet = audio_service_.PopPacketFromSendQueue()) {
                 if (protocol_ && !protocol_->SendAudio(std::move(packet))) {
                     // Drop the remaining packets. Leaving them in the queue would
@@ -273,12 +296,29 @@ void Application::Run() {
 
         if (bits & MAIN_EVENT_CLOCK_TICK) {
             clock_ticks_++;
+            if (boot_started_ == 0) boot_started_ = esp_timer_get_time();
+            if (credential_refresh_pending_.load()) RequestCredentialRefresh();
+            if (credential_refresh_due_ && esp_timer_get_time() >= credential_refresh_due_) StartCredentialRefresh();
+            // The old application is still running briefly after selecting the
+            // new partition. It must not report a rollback before rebooting.
+            if (clock_ticks_ % 15 == 0 && GetDeviceState() != kDeviceStateUpgrading &&
+                !upgrade_running_.load() && !Ota::BootReceiptConfirmed()) {
+                Ota::QueueBootReceipt();
+            }
+            if (clock_ticks_ % 10 == 0 && protocol_healthy_since_ && esp_timer_get_time() - protocol_healthy_since_ >= 30000000 &&
+                audio_service_.IsReady() && Assets::GetInstance().partition_valid() && Ota::BootResourcesVerified() && Ota::BootReceiptConfirmed()) {
+                Ota::MarkCurrentVersionValid();
+            }
+            if (esp_timer_get_time() - boot_started_ > 180000000) {
+                Ota::RollbackUnconfirmedBoot();
+            }
             auto display = Board::GetInstance().GetDisplay();
             display->UpdateStatusBar();
 
             // Print debug info every 10 seconds
             if (clock_ticks_ % 10 == 0) {
                 SystemInfo::PrintHeapStats();
+                audio_service_.LogPlaybackStatistics();
                 // SystemInfo::PrintTaskList();
                 // SystemInfo::PrintTaskCpuUsage(pdMS_TO_TICKS(1000));
             }
@@ -305,7 +345,7 @@ void Application::HandleNetworkConnectedEvent() {
                 app->activation_task_handle_ = nullptr;
                 vTaskDelete(NULL);
             },
-            "activation", 4096 * 2, this, 2, &activation_task_handle_);
+            "activation", 16384, this, 2, &activation_task_handle_);
     }
 
     // Update the status bar immediately to show the network state
@@ -314,6 +354,8 @@ void Application::HandleNetworkConnectedEvent() {
 }
 
 void Application::HandleNetworkDisconnectedEvent() {
+    InvalidatePlayback();
+    protocol_healthy_since_ = 0;
     // Close current conversation when network disconnected
     auto state = GetDeviceState();
     if (state == kDeviceStateNotifying) {
@@ -337,6 +379,7 @@ void Application::HandleActivationDoneEvent() {
     SetDeviceState(kDeviceStateIdle);
 
     has_server_time_ = ota_->HasServerTime();
+    Ota::QueueBootReceipt();
 
     // Protocol start may have already raised MAIN_EVENT_ERROR. Do not replace
     // that alert with the "ready" UI/sound — the main loop can process both
@@ -348,6 +391,12 @@ void Application::HandleActivationDoneEvent() {
         display->ShowNotification(message.c_str());
         display->SetChatMessage("system", "");
     }
+
+    // A passive hello is part of boot health, not a replay of microphone input.
+    // OTA must be confirmable without requiring a person to wake the new image.
+    if (protocol_ && !has_error) OpenAudioChannelAsync([this](bool opened) {
+        if (!opened) credential_refresh_pending_.store(true);
+    });
 
     // Release OTA object after activation is complete
     ota_.reset();
@@ -395,6 +444,12 @@ void Application::CheckAssetsVersion() {
         return;
     }
 
+#if CONFIG_XIAOZHI_REQUIRE_RELEASE_MANIFEST
+    // Single assets partition has no power-fail-safe inactive slot. A controlled
+    // app update must reuse an already verified bundle; never consume legacy download_url.
+    assets.Apply();
+    return;
+#endif
     Settings settings("assets", true);
     // Check if there is a new assets need to be downloaded
     std::string download_url = settings.GetString("download_url");
@@ -490,15 +545,16 @@ void Application::CheckNewVersion() {
         retry_count = 0;
         retry_delay = 10;  // Reset retry delay
 
-        if (ota_->HasNewVersion()) {
-            if (UpgradeFirmware(ota_->GetFirmwareUrl(), ota_->GetFirmwareVersion())) {
+#if CONFIG_XIAOZHI_ALLOW_AUTOMATIC_FIRMWARE_UPGRADE
+        if (ota_->HasNewVersion() && ota_->HasAutomaticRelease()) {
+            if (PerformFirmwareUpgrade(ota_->GetFirmwareUrl(), ota_->GetFirmwareVersion())) {
                 return;  // This line will never be reached after reboot
             }
             // If upgrade failed, continue to normal operation
         }
+#endif
 
-        // No new version, mark the current version as valid
-        ota_->MarkCurrentVersionValid();
+        // Confirmation is deferred until local audio/assets and a protocol handshake are healthy.
         if (!ota_->HasActivationCode() && !ota_->HasActivationChallenge()) {
             // Exit the loop if done checking new version
             break;
@@ -528,13 +584,81 @@ void Application::CheckNewVersion() {
     }
 }
 
+void Application::RequestCredentialRefresh() {
+    if (credential_refresh_due_ || credential_refresh_running_.load() || channel_open_running_.load() || credential_refresh_attempt_ >= 6) return;
+    // Includes the server's 31-second revocation cutoff; no microphone replay.
+    constexpr int delays[] = {2, 4, 8, 16, 32, 60};
+    credential_refresh_due_ = esp_timer_get_time() + int64_t(delays[credential_refresh_attempt_++]) * 1000000;
+}
+
+void Application::StartCredentialRefresh() {
+    credential_refresh_due_ = 0;
+    if (channel_open_running_.load()) return;
+    if (activation_task_handle_ != nullptr) return;
+    if (credential_refresh_running_.exchange(true)) return;
+    InvalidatePlayback();
+    audio_service_.EnableVoiceProcessing(false);
+    audio_service_.EnableWakeWordDetection(false);
+    if (protocol_) protocol_->CloseAudioChannel();
+    SetDeviceState(kDeviceStateIdle);
+    auto result = xTaskCreate([](void* arg) {
+        auto app = static_cast<Application*>(arg);
+        auto fresh = std::make_shared<Ota>();
+        bool success = fresh->CheckVersion().has_value() &&
+                       (fresh->HasWebsocketConfig() || fresh->HasMqttConfig());
+        app->Schedule([app, fresh, success]() {
+            if (success) {
+                app->ota_ = std::make_unique<Ota>(std::move(*fresh));
+                app->InitializeProtocol();
+                app->ota_.reset();
+            }
+            if (!success || !app->protocol_) {
+                app->credential_refresh_running_.store(false);
+                app->credential_refresh_pending_.store(true);
+                app->audio_service_.EnableWakeWordDetection(true);
+                return;
+            }
+            // Probe only the protocol hello on a worker; no old microphone frames,
+            // listen command, or captured utterance is replayed after credential renewal.
+            if (xTaskCreate([](void* raw) {
+                auto owner = static_cast<Application*>(raw);
+                const bool hello = owner->protocol_ && owner->protocol_->OpenAudioChannel();
+                owner->Schedule([owner, hello]() {
+                    owner->credential_refresh_running_.store(false);
+                    owner->credential_refresh_pending_.store(!hello);
+                    owner->SetDeviceState(kDeviceStateIdle);
+                    owner->audio_service_.EnableWakeWordDetection(true);
+                });
+                vTaskDelete(nullptr);
+            }, "credential_hello", 6144, app, 2, nullptr) != pdPASS) {
+                app->credential_refresh_running_.store(false);
+                app->credential_refresh_pending_.store(true);
+            }
+            // A new user wake/listen is required; never replay a captured utterance.
+        });
+        fresh.reset();
+        vTaskDelete(nullptr);
+    }, "refresh_credentials", 6144, this, 2, nullptr);
+    if (result != pdPASS) credential_refresh_running_.store(false);
+}
+
 void Application::InitializeProtocol() {
+    const auto source_epoch = ++protocol_epoch_;
+    InvalidatePlayback();
     auto& board = Board::GetInstance();
     auto display = board.GetDisplay();
     auto codec = board.GetAudioCodec();
 
     display->SetStatus(Lang::Strings::LOADING_PROTOCOL);
 
+#if CONFIG_XIAOZHI_CONTROLLED_RELEASE
+    if (!ota_->HasWebsocketConfig()) {
+        ESP_LOGE(TAG, "Controlled release requires WebSocket v1 credentials");
+        last_error_message_ = "WebSocket credentials unavailable";
+        return;
+    }
+    protocol_ = std::make_unique<WebsocketProtocol>();
+#else
     if (ota_->HasMqttConfig()) {
         protocol_ = std::make_unique<MqttProtocol>();
     } else if (ota_->HasWebsocketConfig()) {
@@ -544,20 +668,35 @@ void Application::InitializeProtocol() {
         protocol_ = std::make_unique<MqttProtocol>();
     }
 
-    protocol_->OnConnected([this]() { DismissAlert(); });
+#endif
 
-    protocol_->OnNetworkError([this](const std::string& message) {
+    protocol_->OnConnected([this, source_epoch]() { Schedule([this, source_epoch]() { if (source_epoch == protocol_epoch_.load()) DismissAlert(); }); });
+
+    protocol_->OnNetworkError([this, source_epoch](const std::string& message) {
+        if (source_epoch != protocol_epoch_.load()) return;
+        playback_fence_.Invalidate();
+        protocol_healthy_since_ = 0;
+        credential_refresh_pending_.store(true);
         last_error_message_ = message;
         xEventGroupSetBits(event_group_, MAIN_EVENT_ERROR);
     });
 
-    protocol_->OnIncomingAudio([this](std::unique_ptr<AudioStreamPacket> packet) {
-        if (GetDeviceState() == kDeviceStateSpeaking) {
-            audio_service_.PushPacketToDecodeQueue(std::move(packet));
+    protocol_->OnIncomingAudio([this, source_epoch](std::unique_ptr<AudioStreamPacket> packet) {
+        if (source_epoch != protocol_epoch_.load()) return;
+        const auto generation = audio_service_.PlaybackGeneration();
+        if (GetDeviceState() == kDeviceStateSpeaking && playback_fence_.Current(playback_fence_.epoch())) {
+            audio_service_.PushPacketToDecodeQueue(std::move(packet), false, generation);
         }
     });
 
-    protocol_->OnAudioChannelOpened([this, codec, &board]() {
+    protocol_->OnAudioChannelOpened([this, codec, &board, source_epoch]() {
+        if (source_epoch != protocol_epoch_.load()) return;
+        playback_fence_.NewConnection();
+        protocol_healthy_since_ = esp_timer_get_time();
+        Schedule([this, source_epoch]() {
+            if (source_epoch != protocol_epoch_.load()) return;
+            credential_refresh_attempt_ = 0; credential_refresh_due_ = 0; credential_refresh_pending_.store(false);
+        });
         board.SetPowerSaveLevel(PowerSaveLevel::PERFORMANCE);
         if (protocol_->server_sample_rate() != codec->output_sample_rate()) {
             ESP_LOGW(TAG,
@@ -567,20 +706,43 @@ void Application::InitializeProtocol() {
         }
     });
 
-    protocol_->OnAudioChannelClosed([this, &board]() {
+    protocol_->OnAudioChannelClosed([this, &board, source_epoch]() {
+        if (source_epoch != protocol_epoch_.load()) return;
         board.SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
-        Schedule([this]() {
+        Schedule([this, source_epoch]() {
+            if (source_epoch != protocol_epoch_.load()) return;
+            InvalidatePlayback();
+            protocol_healthy_since_ = 0;
+#if CONFIG_XIAOZHI_USB_TEXT_CHAT
+            FinishRemoteText(false, "对话连接已关闭");
+#endif
             auto display = Board::GetInstance().GetDisplay();
             display->SetChatMessage("system", "");
             SetDeviceState(kDeviceStateIdle);
         });
     });
 
-    protocol_->OnIncomingJson([this, display](const cJSON* root) {
+    protocol_->OnIncomingJson([this, display, source_epoch](const cJSON* root) {
+        if (source_epoch != protocol_epoch_.load()) return;
         // Parse JSON data
         auto type = cJSON_GetObjectItem(root, "type");
         if (!cJSON_IsString(type)) {
             ESP_LOGW(TAG, "Incoming JSON message has no type");
+            return;
+        }
+        if (strcmp(type->valuestring, "voice_control") == 0) {
+            auto action = cJSON_GetObjectItem(root, "action");
+            auto session = cJSON_GetObjectItem(root, "session_id");
+            if (!cJSON_IsString(action) || !cJSON_IsString(session) || !protocol_ ||
+                session->valuestring != protocol_->session_id())
+                return;
+            std::string value = action->valuestring;
+            if (value != "stop" && value != "exit")
+                return;
+            Schedule([this, source_epoch, value]() {
+                if (source_epoch == protocol_epoch_.load())
+                    HandleVoiceControl(value, "", false);
+            });
             return;
         }
         if (strcmp(type->valuestring, "notify") == 0) {
@@ -621,20 +783,39 @@ void Application::InitializeProtocol() {
             if (!cJSON_IsString(state)) {
                 return;
             }
+            const uint32_t epoch = playback_fence_.epoch();
+            auto turn_node = cJSON_GetObjectItem(root, "turn_id");
+            std::string turn = cJSON_IsString(turn_node) ? turn_node->valuestring : "";
+            auto control_node = cJSON_GetObjectItem(root, "control_version");
+            int64_t control = -1;
+            if (control_node || !turn.empty()) {
+                if (turn.size() != 32 || turn.find_first_not_of("0123456789abcdef") != std::string::npos ||
+                    !cJSON_IsNumber(control_node) || control_node->valuedouble < 0 ||
+                    control_node->valuedouble > 9007199254740991.0 ||
+                    control_node->valuedouble != double(int64_t(control_node->valuedouble))) return;
+                control = int64_t(control_node->valuedouble);
+            }
+#if CONFIG_XIAOZHI_REQUIRE_TTS_TURN_TAGS
+            if (control < 0) return;
+#endif
             if (strcmp(state->valuestring, "start") == 0) {
-                Schedule([this]() {
-                    aborted_ = false;
+                Schedule([this, epoch, turn, control]() {
+                    if (!playback_fence_.Start(epoch, turn, control)) return;
+                    pending_speech_stop_ = false;
+                    audio_service_.SetPlaybackText("");
                     SetDeviceState(kDeviceStateSpeaking);
+                    audio_service_.SetPlaybackExpected(true);
+#if CONFIG_XIAOZHI_USB_TEXT_CHAT
+                    if (!remote_text_id_.empty())
+                        PublishUsbTextChatEvent(remote_text_id_, "speaking");
+#endif
                 });
             } else if (strcmp(state->valuestring, "stop") == 0) {
-                Schedule([this]() {
-                    if (GetDeviceState() == kDeviceStateSpeaking) {
-                        if (listening_mode_ == kListeningModeManualStop) {
-                            SetDeviceState(kDeviceStateIdle);
-                        } else {
-                            SetDeviceState(kDeviceStateListening);
-                        }
-                    }
+                Schedule([this, epoch, turn, control]() {
+                    if (!playback_fence_.Stop(epoch, turn, control)) return;
+                    pending_speech_stop_ = true;
+                    audio_service_.SetPlaybackExpected(false);
+                    FinishSpeakingIfDrained();
                 });
             } else if (strcmp(state->valuestring, "sentence_start") == 0) {
                 auto text = cJSON_GetObjectItem(root, "text");
@@ -645,10 +826,18 @@ void Application::InitializeProtocol() {
                         glyphs.clear();
                     }
                     ESP_LOGI(TAG, "<< %s", text->valuestring);
-                    Schedule([display, message = std::string(text->valuestring),
-                              glyphs = std::move(glyphs), bpp]() {
+                    Schedule([this, display, message = std::string(text->valuestring),
+                              glyphs = std::move(glyphs), bpp, epoch, turn, control]() {
+                        if (!playback_fence_.Current(epoch, turn, control)) return;
+                        audio_service_.SetPlaybackText(message);
                         display->AddTextGlyphs(glyphs, bpp);
                         display->SetChatMessage("assistant", message.c_str());
+#if CONFIG_XIAOZHI_USB_TEXT_CHAT
+                        if (!remote_text_id_.empty()) {
+                            PublishUsbTextChatEvent(remote_text_id_, "assistant", message);
+                            remote_text_deadline_ = esp_timer_get_time() + 90000000;
+                        }
+#endif
                     });
                 }
             }
@@ -661,10 +850,14 @@ void Application::InitializeProtocol() {
                     glyphs.clear();
                 }
                 ESP_LOGI(TAG, ">> %s", text->valuestring);
-                Schedule([display, message = std::string(text->valuestring),
+                Schedule([this, display, message = std::string(text->valuestring),
                           glyphs = std::move(glyphs), bpp]() {
                     display->AddTextGlyphs(glyphs, bpp);
                     display->SetChatMessage("user", message.c_str());
+#if CONFIG_XIAOZHI_USB_TEXT_CHAT
+                    if (!remote_text_id_.empty())
+                        PublishUsbTextChatEvent(remote_text_id_, "recognized", message);
+#endif
                 });
             }
         } else if (strcmp(type->valuestring, "llm") == 0) {
@@ -695,6 +888,16 @@ void Application::InitializeProtocol() {
             auto message = cJSON_GetObjectItem(root, "message");
             auto emotion = cJSON_GetObjectItem(root, "emotion");
             if (cJSON_IsString(status) && cJSON_IsString(message) && cJSON_IsString(emotion)) {
+#if CONFIG_XIAOZHI_USB_TEXT_CHAT
+                if (std::strcmp(status->valuestring, "ERROR") == 0) {
+                    Schedule([this, message = std::string(message->valuestring)]() {
+                        if (!remote_text_id_.empty()) {
+                            FinishRemoteText(false, message);
+                            SetDeviceState(kDeviceStateIdle);
+                        }
+                    });
+                }
+#endif
                 Alert(status->valuestring, message->valuestring, emotion->valuestring,
                       Lang::Sounds::OGG_VIBRATION);
             } else {
@@ -778,6 +981,7 @@ void Application::StartListening() { xEventGroupSetBits(event_group_, MAIN_EVENT
 void Application::StopListening() { xEventGroupSetBits(event_group_, MAIN_EVENT_STOP_LISTENING); }
 
 void Application::HandleToggleChatEvent() {
+    if (credential_refresh_running_.load() || upgrade_running_.load()) return;
     auto state = GetDeviceState();
 
     if (state == kDeviceStateNotifying) {
@@ -814,12 +1018,38 @@ void Application::HandleToggleChatEvent() {
         SetListeningMode(mode);
     } else if (state == kDeviceStateSpeaking) {
         AbortSpeaking(kAbortReasonNone);
+        SetDeviceState(kDeviceStateIdle);
     } else if (state == kDeviceStateListening) {
         protocol_->CloseAudioChannel();
     }
 }
 
+void Application::OpenAudioChannelAsync(std::function<void(bool)> complete) {
+    if (!protocol_) return;
+    if (channel_open_running_.exchange(true)) { SetDeviceState(kDeviceStateIdle); return; }
+    struct Request {
+        Application* app; std::shared_ptr<Protocol> protocol;
+        uint32_t epoch; std::function<void(bool)> complete;
+    };
+    auto request = new (std::nothrow) Request{this, protocol_, channel_request_epoch_.load(), std::move(complete)};
+    if (!request) { channel_open_running_.store(false); SetDeviceState(kDeviceStateIdle); return; }
+    if (xTaskCreate([](void* raw) {
+        auto data = std::shared_ptr<Request>(static_cast<Request*>(raw));
+        const bool opened = data->protocol->OpenAudioChannel();
+        data->app->Schedule([data, opened]() {
+            data->app->channel_open_running_.store(false);
+            if (data->app->protocol_ == data->protocol && data->epoch == data->app->channel_request_epoch_.load()) data->complete(opened);
+            else if (data->app->protocol_ == data->protocol && data->app->GetDeviceState() == kDeviceStateConnecting) data->app->SetDeviceState(kDeviceStateIdle);
+        });
+        data.reset();
+        vTaskDelete(nullptr);
+    }, "audio_channel_open", 6144, request, 2, nullptr) != pdPASS) {
+        delete request; channel_open_running_.store(false); SetDeviceState(kDeviceStateIdle);
+    }
+}
+
 void Application::ContinueOpenAudioChannel(ListeningMode mode) {
+    if (credential_refresh_running_.load() || upgrade_running_.load()) return;
     // Check state again in case it was changed during scheduling
     if (GetDeviceState() != kDeviceStateConnecting) {
         return;
@@ -830,18 +1060,18 @@ void Application::ContinueOpenAudioChannel(ListeningMode mode) {
     board.SetPowerSaveLevel(PowerSaveLevel::PERFORMANCE);
 
     if (!protocol_->IsAudioChannelOpened()) {
-        if (!protocol_->OpenAudioChannel()) {
-            // Return to idle so the device is not stuck in the connecting
-            // state (not every failure path reports a network error)
-            SetDeviceState(kDeviceStateIdle);
-            return;
-        }
+        OpenAudioChannelAsync([this, mode](bool opened) {
+            if (GetDeviceState() != kDeviceStateConnecting) return;
+            if (opened) SetListeningMode(mode); else SetDeviceState(kDeviceStateIdle);
+        });
+        return;
     }
 
     SetListeningMode(mode);
 }
 
 void Application::HandleStartListeningEvent() {
+    if (credential_refresh_running_.load() || upgrade_running_.load()) return;
     auto state = GetDeviceState();
 
     if (state == kDeviceStateNotifying) {
@@ -895,6 +1125,7 @@ void Application::HandleStopListeningEvent() {
 }
 
 void Application::HandleWakeWordDetectedEvent() {
+    if (credential_refresh_running_.load() || upgrade_running_.load()) return;
     if (!protocol_) {
         return;
     }
@@ -915,6 +1146,7 @@ void Application::HandleWakeWordDetectedEvent() {
             ;
 
         if (state == kDeviceStateListening) {
+            playback_fence_.ExpectResponse();
             protocol_->SendStartListening(GetDefaultListeningMode());
             audio_service_.ResetDecoder();
             audio_service_.PlaySound(Lang::Sounds::OGG_POPUP);
@@ -956,6 +1188,7 @@ void Application::BeginWakeWordInvoke(const std::string& wake_word) {
 }
 
 void Application::ContinueWakeWordInvoke(const std::string& wake_word) {
+    if (credential_refresh_running_.load() || upgrade_running_.load()) return;
     // Check state again in case it was changed during scheduling
     if (GetDeviceState() != kDeviceStateConnecting) {
         return;
@@ -966,13 +1199,11 @@ void Application::ContinueWakeWordInvoke(const std::string& wake_word) {
     board.SetPowerSaveLevel(PowerSaveLevel::PERFORMANCE);
 
     if (!protocol_->IsAudioChannelOpened()) {
-        if (!protocol_->OpenAudioChannel()) {
-            // Return to idle so the device is not stuck in the connecting
-            // state (not every failure path reports a network error), and
-            // wake word detection is re-enabled by the idle state handler.
-            SetDeviceState(kDeviceStateIdle);
-            return;
-        }
+        OpenAudioChannelAsync([this, wake_word](bool opened) {
+            if (!opened) SetDeviceState(kDeviceStateIdle);
+            else ContinueWakeWordInvoke(wake_word);
+        });
+        return;
     }
 
     ESP_LOGI(TAG, "Wake word detected: %s", wake_word.c_str());
@@ -982,7 +1213,9 @@ void Application::ContinueWakeWordInvoke(const std::string& wake_word) {
         protocol_->SendAudio(std::move(packet));
     }
     // Set the chat state to wake word detected
+    playback_fence_.ExpectResponse();
     protocol_->SendWakeWordDetected(wake_word);
+    play_popup_on_listening_ = true;
     SetListeningMode(GetDefaultListeningMode());
 #else
     // Set flag to play popup sound after state changes to listening
@@ -1007,6 +1240,7 @@ void Application::HandleStateChangedEvent() {
     switch (new_state) {
         case kDeviceStateUnknown:
         case kDeviceStateIdle:
+            audio_service_.SetPlaybackText("");
             // Keep a just-raised network error visible. SetDeviceState(idle)
             // queues STATE_CHANGED after Alert(), and the idle handler would
             // otherwise wipe the status, emotion, and chat message.
@@ -1025,6 +1259,17 @@ void Application::HandleStateChangedEvent() {
             display->SetChatMessage("system", "");
             break;
         case kDeviceStateListening:
+            if (audio_service_.IsPlaybackIdle()) {
+                audio_service_.SetPlaybackText("");
+            }
+#if CONFIG_XIAOZHI_USB_TEXT_CHAT
+            if (!remote_text_id_.empty()) {
+                display->SetStatus("等待回复");
+                audio_service_.EnableVoiceProcessing(false);
+                audio_service_.EnableWakeWordDetection(false);
+                break;
+            }
+#endif
             display->SetStatus(Lang::Strings::LISTENING);
             display->SetEmotion("neutral");
 
@@ -1049,7 +1294,12 @@ void Application::HandleStateChangedEvent() {
             if (listening_mode_ != kListeningModeRealtime) {
                 audio_service_.EnableVoiceProcessing(false);
                 // Only AFE wake word can be detected in speaking mode
+#if CONFIG_XIAOZHI_USB_TEXT_CHAT
+                audio_service_.EnableWakeWordDetection(remote_text_id_.empty() &&
+                                                       audio_service_.IsAfeWakeWord());
+#else
                 audio_service_.EnableWakeWordDetection(audio_service_.IsAfeWakeWord());
+#endif
             }
             audio_service_.ResetDecoder();
             break;
@@ -1076,6 +1326,7 @@ void Application::StartListeningAudio() {
     }
 
     // Send the start listening command
+    playback_fence_.ExpectResponse();
     protocol_->SendStartListening(listening_mode_);
     audio_service_.EnableVoiceProcessing(true);
 
@@ -1172,12 +1423,112 @@ void Application::Schedule(std::function<void()>&& callback) {
     xEventGroupSetBits(event_group_, MAIN_EVENT_SCHEDULE);
 }
 
+void Application::FinishSpeakingIfDrained() {
+    if (!pending_speech_stop_ || !audio_service_.IsPlaybackIdle()) {
+        return;
+    }
+    pending_speech_stop_ = false;
+    audio_service_.SetPlaybackText("");
+#if CONFIG_XIAOZHI_USB_TEXT_CHAT
+    FinishRemoteText(true);
+#endif
+    if (GetDeviceState() == kDeviceStateSpeaking) {
+        SetDeviceState(listening_mode_ == kListeningModeManualStop ? kDeviceStateIdle
+                                                                   : kDeviceStateListening);
+    }
+}
+
+void Application::InvalidatePlayback() {
+    ++channel_request_epoch_;
+    playback_fence_.Invalidate();
+    audio_service_.SetPlaybackExpected(false);
+    pending_listening_start_ = false;
+    pending_speech_stop_ = false;
+    audio_service_.SetPlaybackText("");
+    play_popup_on_listening_ = false;
+    audio_service_.ResetDecoder();
+    audio_service_.DiscardInput();
+}
+
+void Application::HandleVoiceControl(const std::string& action, const std::string& text,
+                                     bool notify_server) {
+    if (action != "stop" && action != "exit")
+        return;
+    const auto state = GetDeviceState();
+    if (state != kDeviceStateListening && state != kDeviceStateSpeaking &&
+        state != kDeviceStateConnecting) {
+        audio_service_.EnableWakeWordDetection(true);
+        return;
+    }
+    ESP_LOGI(TAG, "Voice control: %s", action.c_str());
+    if (action == "stop" && notify_server) {
+        // Use the current turn's abort fence. Echoing the control back as a
+        // detect event could discard the start of the user's next question.
+        AbortSpeaking(kAbortReasonNone);
+    } else {
+        InvalidatePlayback();
+    }
+    if (action == "exit") {
+        audio_service_.EnableVoiceProcessing(false);
+        SetDeviceState(kDeviceStateIdle);
+    } else {
+        SetListeningMode(GetDefaultListeningMode());
+        if (state == kDeviceStateListening)
+            StartListeningAudio();
+        return;
+    }
+    audio_service_.EnableWakeWordDetection(true);
+    auto protocol = protocol_;
+    if (!notify_server || !protocol || !protocol->IsAudioChannelOpened())
+        return;
+    if (abort_commands_.fetch_add(1) >= 4) {
+        --abort_commands_;
+        return;
+    }
+    struct Request {
+        Application* app;
+        std::shared_ptr<Protocol> protocol;
+        std::string session, text;
+    };
+    auto request = new (std::nothrow) Request{this, protocol, protocol->session_id(), text};
+    if (!request) {
+        --abort_commands_;
+        return;
+    }
+    if (xTaskCreate(
+            [](void* raw) {
+                auto data = static_cast<Request*>(raw);
+                if (data->protocol->session_id() == data->session)
+                    data->protocol->SendWakeWordDetected(data->text);
+                --data->app->abort_commands_;
+                delete data;
+                vTaskDelete(nullptr);
+            },
+            "voice_control", 4096, request, 4, nullptr) != pdPASS) {
+        --abort_commands_;
+        delete request;
+    }
+}
+
 void Application::AbortSpeaking(AbortReason reason) {
     ESP_LOGI(TAG, "Abort speaking");
-    aborted_ = true;
-    if (protocol_) {
-        protocol_->SendAbortSpeaking(reason);
-    }
+    const auto identity = playback_fence_.identity();
+    auto protocol = protocol_;
+    const auto session = protocol ? protocol->session_id() : "";
+    InvalidatePlayback();
+    if (!protocol) return;
+    if (abort_commands_.fetch_add(1) >= 4) { --abort_commands_; return; }
+    struct Request {
+        Application* app; std::shared_ptr<Protocol> protocol;
+        AbortReason reason; std::string session, turn; int64_t control;
+    };
+    auto request = new (std::nothrow) Request{this, std::move(protocol), reason, session, identity.turn, identity.control};
+    if (!request) { --abort_commands_; return; }
+    if (xTaskCreate([](void* raw) {
+        auto data = static_cast<Request*>(raw);
+        data->protocol->SendAbortSpeaking(data->reason, data->session, data->turn, data->control);
+        --data->app->abort_commands_; delete data; vTaskDelete(nullptr);
+    }, "abort_speaking", 4096, request, 3, nullptr) != pdPASS) { --abort_commands_; delete request; }
 }
 
 void Application::SetListeningMode(ListeningMode mode) {
@@ -1206,6 +1557,25 @@ void Application::Reboot() {
 }
 
 bool Application::UpgradeFirmware(const std::string& url, const std::string& version) {
+    if (credential_refresh_running_.load() || activation_task_handle_ != nullptr || upgrade_running_.exchange(true)) return false;
+    struct Request { Application* app; std::string url, version; };
+    auto request = new (std::nothrow) Request{this, url, version};
+    if (!request) { upgrade_running_.store(false); return false; }
+    Schedule([this, request]() {
+        InvalidatePlayback();
+        if (xTaskCreate([](void* raw) {
+            auto data = static_cast<Request*>(raw);
+            const bool installed = data->app->PerformFirmwareUpgrade(data->url, data->version);
+            if (!installed) data->app->Schedule([app = data->app]() { app->SetDeviceState(kDeviceStateIdle); });
+            data->app->upgrade_running_.store(false); delete data; vTaskDelete(nullptr);
+        }, "verified_upgrade", 16384, request, 2, nullptr) != pdPASS) {
+            upgrade_running_.store(false); delete request;
+        }
+    });
+    return true;  // Accepted for background verification, not an installation confirmation.
+}
+
+bool Application::PerformFirmwareUpgrade(const std::string& url, const std::string& version) {
     auto& board = Board::GetInstance();
     auto display = board.GetDisplay();
 
@@ -1221,7 +1591,7 @@ bool Application::UpgradeFirmware(const std::string& url, const std::string& ver
         ESP_LOGI(TAG, "Closing audio channel before firmware upgrade");
         protocol_->CloseAudioChannel();
     }
-    ESP_LOGI(TAG, "Starting firmware upgrade from URL: %s", upgrade_url.c_str());
+    ESP_LOGI(TAG, "Starting firmware upgrade from verified offer");
 
     Alert(Lang::Strings::OTA_UPGRADE, Lang::Strings::UPGRADING, "download",
           Lang::Sounds::OGG_UPGRADE);
@@ -1330,6 +1700,84 @@ void Application::SendMcpMessage(const std::string& payload) {
     });
 }
 
+#if CONFIG_XIAOZHI_USB_TEXT_CHAT
+void Application::SubmitRemoteText(const std::string& id, const std::string& text) {
+    Schedule([this, id, text]() {
+        if (!protocol_ || credential_refresh_running_.load() || GetDeviceState() != kDeviceStateIdle || !remote_text_id_.empty()) {
+            PublishUsbTextChatEvent(id, "error", "小智尚未就绪或正在对话，请稍后重试");
+            ReleaseUsbTextChatRequest();
+            return;
+        }
+        remote_text_id_ = id;
+        remote_text_deadline_ = esp_timer_get_time() + 90000000;
+        listening_mode_ = kListeningModeManualStop;
+        audio_service_.EnableVoiceProcessing(false);
+        audio_service_.EnableWakeWordDetection(false);
+        audio_service_.ResetDecoder();
+        PublishUsbTextChatEvent(id, "connecting");
+        SetDeviceState(kDeviceStateConnecting);
+        auto& board = Board::GetInstance();
+        board.SetPowerSaveLevel(PowerSaveLevel::PERFORMANCE);
+        auto ready = [this, id, text](bool opened) {
+            if (id != remote_text_id_) return;
+            if (!opened) {
+                FinishRemoteText(false, "无法连接小智服务"); SetDeviceState(kDeviceStateIdle); return;
+            }
+            SetDeviceState(kDeviceStateListening);
+            Board::GetInstance().GetDisplay()->SetChatMessage("user", text.c_str());
+            playback_fence_.ExpectResponse();
+            protocol_->SendStartListening(kListeningModeManualStop);
+            PublishUsbTextChatEvent(id, "audio_ready");
+        };
+        if (protocol_->IsAudioChannelOpened()) ready(true);
+        else OpenAudioChannelAsync(std::move(ready));
+    });
+}
+
+void Application::SubmitRemoteAudio(const std::string& id, std::vector<uint8_t> payload) {
+    if (payload.empty() || payload.size() > 1024)
+        return;
+    if (remote_audio_pending_.fetch_add(1) >= 8) {
+        remote_audio_pending_.fetch_sub(1);
+        PublishUsbTextChatEvent(id, "error", "替代语音发送过快");
+        return;
+    }
+    Schedule([this, id, payload = std::move(payload)]() mutable {
+        remote_audio_pending_.fetch_sub(1);
+        if (id != remote_text_id_ || GetDeviceState() != kDeviceStateListening || !protocol_)
+            return;
+        auto packet = std::make_unique<AudioStreamPacket>();
+        packet->sample_rate = 16000;
+        packet->frame_duration = 60;
+        packet->payload = std::move(payload);
+        if (!protocol_->SendAudio(std::move(packet))) {
+            FinishRemoteText(false, "替代语音发送失败");
+            SetDeviceState(kDeviceStateIdle);
+        } else {
+            remote_text_deadline_ = esp_timer_get_time() + 90000000;
+        }
+    });
+}
+
+void Application::CompleteRemoteAudio(const std::string& id) {
+    Schedule([this, id]() {
+        if (id == remote_text_id_ && protocol_) {
+            protocol_->SendStopListening();
+            PublishUsbTextChatEvent(id, "sent");
+        }
+    });
+}
+
+void Application::FinishRemoteText(bool success, const std::string& message) {
+    if (remote_text_id_.empty())
+        return;
+    PublishUsbTextChatEvent(remote_text_id_, success ? "complete" : "error", message);
+    remote_text_id_.clear();
+    remote_text_deadline_ = 0;
+    ReleaseUsbTextChatRequest();
+}
+#endif
+
 void Application::SetAecMode(AecMode mode) {
     aec_mode_ = mode;
     Schedule([this]() {
@@ -1361,6 +1809,8 @@ void Application::PlaySound(const std::string_view& sound) { audio_service_.Play
 
 void Application::ResetProtocol() {
     Schedule([this]() {
+        if (credential_refresh_running_.load() || upgrade_running_.load() || channel_open_running_.load()) return;
+        InvalidatePlayback();
         if (GetDeviceState() == kDeviceStateNotifying) {
             StopNotification();
         }
@@ -1369,6 +1819,7 @@ void Application::ResetProtocol() {
             protocol_->CloseAudioChannel();
         }
         // Reset protocol
+        ++protocol_epoch_;
         protocol_.reset();
     });
 }

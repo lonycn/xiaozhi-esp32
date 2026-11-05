@@ -45,6 +45,16 @@ set(SOURCES "audio/audio_codec.cc"
 
 set(INCLUDE_DIRS "." "display" "display/lvgl_display" "display/lvgl_display/jpg" "audio" "audio/demuxer" "protocols")
 
+if(CONFIG_XIAOZHI_USB_SCREEN_MIRROR)
+    list(APPEND SOURCES "display/usb_screen_mirror.cc")
+endif()
+if(CONFIG_XIAOZHI_USB_TEXT_CHAT)
+    list(APPEND SOURCES "display/usb_text_chat.cc")
+endif()
+if(CONFIG_XIAOZHI_DEVELOPMENT_IDENTITY OR CONFIG_XIAOZHI_CONTROLLED_RELEASE)
+    list(APPEND SOURCES "development_identity.cc")
+endif()
+
 # Add board common files
 list(APPEND SOURCES
     "boards/common/board.cc"
@@ -1130,6 +1140,7 @@ idf_component_register(SRCS ${SOURCES}
                         esp_eth
                         esp_driver_gpio
                         esp_driver_uart
+                        esp_driver_usb_serial_jtag
                         esp_driver_spi
                         esp_driver_i2c
                         esp_driver_i2s

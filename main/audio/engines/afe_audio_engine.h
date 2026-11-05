@@ -31,6 +31,7 @@ public:
     void EnableWakeWordDetection(bool enable) override;
     void EnableVoiceProcessing(bool enable) override;
     void EnableDeviceAec(bool enable) override;
+    void SetPlaybackText(const std::string& text) override;
 
     bool HasWakeWord() const override;
     bool IsWakeWordDetectionEnabled() const override;
@@ -39,6 +40,8 @@ public:
     size_t GetFeedSize() const override;
 
     void OnWakeWordDetected(std::function<void(const std::string& wake_word)> callback) override;
+    void OnVoiceControl(
+        std::function<void(const std::string&, const std::string&)> callback) override;
     void OnOutput(std::function<void(std::vector<int16_t>&& data)> callback) override;
     void OnVadStateChange(std::function<void(bool speaking)> callback) override;
 
@@ -82,6 +85,7 @@ private:
     WakeDetector wake_detector_ = WakeDetector::kNone;
 
     std::unique_ptr<CustomWakeWord> custom_wake_word_;
+    std::function<void(const std::string&, const std::string&)> voice_control_callback_;
     std::vector<std::string> wake_words_;
     std::string last_detected_wake_word_;
     std::vector<int16_t> input_buffer_;
