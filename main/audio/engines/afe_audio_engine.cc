@@ -1,4 +1,5 @@
 #include "afe_audio_engine.h"
+#include "audio_diagnostics.h"
 
 #include <cassert>
 #include <cstring>
@@ -83,6 +84,11 @@ bool AfeAudioEngine::Initialize(AudioCodec* codec, int frame_duration_ms,
     if (multinet_model_name != nullptr) {
         wake_detector_ = WakeDetector::kMultiNet;
         custom_wake_word_ = std::make_unique<CustomWakeWord>();
+        custom_wake_word_->OnVoiceControl(
+            [this](const std::string& action, const std::string& text) {
+                if (voice_control_callback_)
+                    voice_control_callback_(action, text);
+            });
         custom_wake_word_->OnWakeWordDetected([this](const std::string& wake_word) {
             last_detected_wake_word_ = wake_word;
             xEventGroupClearBits(event_group_, kWakeWordEnabled);
@@ -307,6 +313,12 @@ void AfeAudioEngine::EnableVoiceProcessing(bool enable) {
     UpdateActiveState();
 }
 
+void AfeAudioEngine::SetPlaybackText(const std::string& text) {
+    if (custom_wake_word_) {
+        custom_wake_word_->SetPlaybackText(text);
+    }
+}
+
 void AfeAudioEngine::EnableDeviceAec(bool enable) {
     device_aec_enabled_.store(enable);
     if (enable && (codec_ == nullptr || !codec_->input_reference())) {
@@ -316,6 +328,10 @@ void AfeAudioEngine::EnableDeviceAec(bool enable) {
 }
 
 bool AfeAudioEngine::HasWakeWord() const { return wake_detector_ != WakeDetector::kNone; }
+void AfeAudioEngine::OnVoiceControl(
+    std::function<void(const std::string&, const std::string&)> callback) {
+    voice_control_callback_ = std::move(callback);
+}
 
 std::vector<std::string> AfeAudioEngine::GetWakeWords() const {
     return custom_wake_word_ ? custom_wake_word_->GetWakeWords() : wake_words_;
@@ -453,6 +469,11 @@ void AfeAudioEngine::ProcessingTask() {
 
 void AfeAudioEngine::HandleWakeWordResult(const afe_fetch_result_t* result) {
     if (wake_detector_ == WakeDetector::kMultiNet) {
+#if CONFIG_XIAOZHI_AUDIO_DIAGNOSTICS
+        static audio_diagnostics::Window diagnostics;
+        diagnostics.Record("afe-multinet", result->data, result->data_size / sizeof(int16_t), true,
+                           xEventGroupGetBits(event_group_));
+#endif
         custom_wake_word_->FeedMono(result->data, result->data_size / sizeof(int16_t));
         return;
     }

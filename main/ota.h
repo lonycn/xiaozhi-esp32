@@ -8,6 +8,7 @@
 
 #include <esp_err.h>
 #include "board.h"
+#include "release_manifest.h"
 #include "network_error.h"
 
 class Ota {
@@ -25,7 +26,14 @@ public:
     bool HasServerTime() { return has_server_time_; }
     bool StartUpgrade(std::function<void(int progress, size_t speed)> callback);
     static bool Upgrade(const std::string& firmware_url, std::function<void(int progress, size_t speed)> callback);
-    void MarkCurrentVersionValid();
+    static void MarkCurrentVersionValid();
+    static bool BootResourcesVerified();
+    static bool BootReceiptConfirmed();
+    static void QueueReceipt(const std::string& status);
+    static void QueueBootReceipt();
+    bool SendReceipt(const std::string& status, const std::string& release, const std::string& version);
+    static void RollbackUnconfirmedBoot();
+    bool HasAutomaticRelease() const { return manifest_.valid && manifest_.update_policy == "automatic"; }
 
     const std::string& GetFirmwareVersion() const { return firmware_version_; }
     const std::string& GetCurrentVersion() const { return current_version_; }
@@ -35,6 +43,9 @@ public:
     std::string GetCheckVersionUrl();
 
 private:
+    ReleaseManifest manifest_;
+    bool ValidateManifest(const cJSON* firmware);
+    static bool UpgradeVerified(const std::string& url, const ReleaseManifest* manifest, std::function<void(int,size_t)> callback);
     std::string activation_message_;
     std::string activation_code_;
     bool has_new_version_ = false;
@@ -55,7 +66,7 @@ private:
     std::expected<std::vector<int>, std::string> ParseVersion(const std::string& version);
     bool IsNewVersionAvailable(const std::string& currentVersion, const std::string& newVersion);
     std::string GetActivationPayload();
-    std::unique_ptr<Http> SetupHttp();
+    std::unique_ptr<Http> SetupHttp(int connection_id = 0);
 };
 
 #endif // _OTA_H

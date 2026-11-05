@@ -64,7 +64,7 @@ public:
     virtual void SendWakeWordDetected(const std::string& wake_word);
     virtual void SendStartListening(ListeningMode mode);
     virtual void SendStopListening();
-    virtual void SendAbortSpeaking(AbortReason reason);
+    virtual void SendAbortSpeaking(AbortReason reason, const std::string& session = {}, const std::string& turn = {}, int64_t control = -1);
     virtual void SendMcpMessage(const std::string& message);
 
 protected:

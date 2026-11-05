@@ -1,5 +1,7 @@
 #include "websocket_protocol.h"
 #include "application.h"
+#include "audio_wire_validation.h"
+#include "release_manifest.h"
 #include "board.h"
 #include "settings.h"
 #include "system_info.h"
@@ -73,18 +75,34 @@ bool WebsocketProtocol::IsAudioChannelOpened() const {
 
 void WebsocketProtocol::CloseAudioChannel(bool send_goodbye) {
     (void)send_goodbye;  // Websocket doesn't need to send goodbye message
+    ++connection_generation_;
     websocket_.reset();
+    if (on_audio_channel_closed_) on_audio_channel_closed_();
 }
 
 bool WebsocketProtocol::OpenAudioChannel() {
     Settings settings("websocket", false);
     std::string url = settings.GetString("url");
     std::string token = settings.GetString("token");
+#if CONFIG_XIAOZHI_CONTROLLED_RELEASE
+#if CONFIG_XIAOZHI_RELEASE_ALLOW_LAN_HTTP
+    constexpr bool lan = true;
+#else
+    constexpr bool lan = false;
+#endif
+    if (!release_manifest::AllowedUrl(url, lan, true)) return false;
+#endif
     int version = settings.GetInt("version");
+#if CONFIG_XIAOZHI_CONTROLLED_RELEASE
+    version = 1;  // Stock ESP32 release wire is pinned; no silent protocol negotiation.
+#endif
+    if (version < 0 || version > 3) return false;
     if (version != 0) {
         version_ = version;
     }
 
+    const uint32_t connection = ++connection_generation_;
+    xEventGroupClearBits(event_group_handle_, WEBSOCKET_PROTOCOL_SERVER_HELLO_EVENT);
     error_occurred_ = false;
 
     auto network = Board::GetInstance().GetNetwork();
@@ -105,38 +123,19 @@ bool WebsocketProtocol::OpenAudioChannel() {
     websocket_->SetHeader("Device-Id", SystemInfo::GetMacAddress().c_str());
     websocket_->SetHeader("Client-Id", Board::GetInstance().GetUuid().c_str());
 
-    websocket_->OnData([this](const char* data, size_t len, bool binary) {
+    websocket_->OnData([this, connection](const char* data, size_t len, bool binary) {
+        if (connection != connection_generation_.load()) return;
         if (binary) {
             if (on_incoming_audio_ != nullptr) {
-                if (version_ == 2) {
-                    BinaryProtocol2* bp2 = (BinaryProtocol2*)data;
-                    bp2->version = ntohs(bp2->version);
-                    bp2->type = ntohs(bp2->type);
-                    bp2->timestamp = ntohl(bp2->timestamp);
-                    bp2->payload_size = ntohl(bp2->payload_size);
-                    auto payload = (uint8_t*)bp2->payload;
-                    on_incoming_audio_(std::make_unique<AudioStreamPacket>(AudioStreamPacket{
-                        .sample_rate = server_sample_rate_,
-                        .frame_duration = server_frame_duration_,
-                        .timestamp = bp2->timestamp,
-                        .payload = std::vector<uint8_t>(payload, payload + bp2->payload_size)}));
-                } else if (version_ == 3) {
-                    BinaryProtocol3* bp3 = (BinaryProtocol3*)data;
-                    bp3->type = bp3->type;
-                    bp3->payload_size = ntohs(bp3->payload_size);
-                    auto payload = (uint8_t*)bp3->payload;
-                    on_incoming_audio_(std::make_unique<AudioStreamPacket>(AudioStreamPacket{
-                        .sample_rate = server_sample_rate_,
-                        .frame_duration = server_frame_duration_,
-                        .timestamp = 0,
-                        .payload = std::vector<uint8_t>(payload, payload + bp3->payload_size)}));
-                } else {
-                    on_incoming_audio_(std::make_unique<AudioStreamPacket>(AudioStreamPacket{
-                        .sample_rate = server_sample_rate_,
-                        .frame_duration = server_frame_duration_,
-                        .timestamp = 0,
-                        .payload = std::vector<uint8_t>((uint8_t*)data, (uint8_t*)data + len)}));
+                audio_wire::View frame{};
+                if (!audio_wire::Parse(data, len, version_, frame)) {
+                    ESP_LOGW(TAG, "Rejected malformed audio frame (%u bytes)", unsigned(len));
+                    return;
                 }
+                on_incoming_audio_(std::make_unique<AudioStreamPacket>(AudioStreamPacket{
+                    .sample_rate = server_sample_rate_, .frame_duration = server_frame_duration_,
+                    .timestamp = frame.timestamp,
+                    .payload = std::vector<uint8_t>(frame.data, frame.data + frame.size)}));
             }
         } else {
             // Parse JSON data
@@ -169,7 +168,9 @@ bool WebsocketProtocol::OpenAudioChannel() {
         });
     });
 
-    websocket_->OnDisconnected([this]() {
+    websocket_->OnDisconnected([this, connection]() {
+        if (connection != connection_generation_.load())
+            return;
         ESP_LOGI(TAG, "Websocket disconnected");
         if (on_audio_channel_closed_ != nullptr) {
             on_audio_channel_closed_();
@@ -200,6 +201,9 @@ bool WebsocketProtocol::OpenAudioChannel() {
         return false;
     }
 
+    // A freshly completed hello must not inherit the previous connection's
+    // idle timestamp (which could otherwise trigger an immediate second open).
+    last_incoming_time_ = std::chrono::steady_clock::now();
     if (on_audio_channel_opened_ != nullptr) {
         on_audio_channel_opened_();
     }
@@ -262,5 +266,9 @@ void WebsocketProtocol::ParseServerHello(const cJSON* root) {
         }
     }
 
+    if (!audio_wire::Parameters(server_sample_rate_, server_frame_duration_)) {
+        SetError(Lang::Strings::SERVER_ERROR);
+        return;
+    }
     xEventGroupSetBits(event_group_handle_, WEBSOCKET_PROTOCOL_SERVER_HELLO_EVENT);
 }

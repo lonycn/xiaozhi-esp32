@@ -13,6 +13,118 @@
             "sdkconfig_append": [
                 "CONFIG_OLED_SSD1306_128X64=y"
             ]
+        },
+        {
+            "name": "bread-compact-wifi-128x32-usb-mirror",
+            "sdkconfig_append": [
+                "CONFIG_OLED_SSD1306_128X32=y",
+                "CONFIG_SPIRAM_MODE_OCT=n",
+                "CONFIG_SPIRAM_MODE_QUAD=y",
+                "CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y",
+                "CONFIG_XIAOZHI_USB_SCREEN_MIRROR=y",
+                "CONFIG_XIAOZHI_USB_TEXT_CHAT=y",
+                "CONFIG_XIAOZHI_ALLOW_AUTOMATIC_FIRMWARE_UPGRADE=n"
+            ]
+        },
+        {
+            "name": "bread-compact-wifi-128x64-usb-mirror",
+            "sdkconfig_append": [
+                "CONFIG_OLED_SSD1306_128X64=y",
+                "CONFIG_SPIRAM_MODE_OCT=n",
+                "CONFIG_SPIRAM_MODE_QUAD=y",
+                "CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y",
+                "CONFIG_XIAOZHI_USB_SCREEN_MIRROR=y",
+                "CONFIG_XIAOZHI_USB_TEXT_CHAT=y",
+                "CONFIG_XIAOZHI_ALLOW_AUTOMATIC_FIRMWARE_UPGRADE=n"
+            ]
+        },
+        {
+            "name": "bread-compact-wifi-128x32-usb-mirror-devmac",
+            "sdkconfig_append": [
+                "CONFIG_OLED_SSD1306_128X32=y",
+                "CONFIG_SPIRAM_MODE_OCT=n",
+                "CONFIG_SPIRAM_MODE_QUAD=y",
+                "CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y",
+                "CONFIG_XIAOZHI_USB_SCREEN_MIRROR=y",
+                "CONFIG_XIAOZHI_USB_TEXT_CHAT=y",
+                "CONFIG_XIAOZHI_ALLOW_AUTOMATIC_FIRMWARE_UPGRADE=n",
+                "CONFIG_XIAOZHI_DEVELOPMENT_IDENTITY=y",
+                "CONFIG_XIAOZHI_DEVELOPMENT_FACTORY_MAC=\"74:4d:bd:a2:c4:2c\"",
+                "CONFIG_XIAOZHI_DEVELOPMENT_MAC=\"02:21:64:63:44:5a\"",
+                "CONFIG_XIAOZHI_DEVELOPMENT_UUID=\"b67553bc-4483-4a0f-84a0-ce7e801e8bf7\""
+            ]
+        },
+        {
+            "name": "bread-compact-wifi-128x32-usb-mirror-devmac-daleng",
+            "sdkconfig_append": [
+                "CONFIG_OLED_SSD1306_128X32=y",
+                "CONFIG_SPIRAM_MODE_OCT=n",
+                "CONFIG_SPIRAM_MODE_QUAD=y",
+                "CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y",
+                "CONFIG_XIAOZHI_USB_SCREEN_MIRROR=y",
+                "CONFIG_XIAOZHI_USB_TEXT_CHAT=y",
+                "CONFIG_XIAOZHI_ALLOW_AUTOMATIC_FIRMWARE_UPGRADE=n",
+                "CONFIG_XIAOZHI_DEVELOPMENT_IDENTITY=y",
+                "CONFIG_XIAOZHI_DEVELOPMENT_FACTORY_MAC=\"74:4d:bd:a2:c4:2c\"",
+                "CONFIG_XIAOZHI_DEVELOPMENT_MAC=\"02:21:64:63:44:5a\"",
+                "CONFIG_XIAOZHI_DEVELOPMENT_UUID=\"b67553bc-4483-4a0f-84a0-ce7e801e8bf7\""
+            ],
+            "sdkconfig_profile": "daleng-cn"
+        },
+        {
+            "name": "bread-compact-wifi-128x32-usb-mirror-devmac-daleng-diag",
+            "sdkconfig_append": [
+                "CONFIG_OLED_SSD1306_128X32=y",
+                "CONFIG_SPIRAM_MODE_OCT=n",
+                "CONFIG_SPIRAM_MODE_QUAD=y",
+                "CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y",
+                "CONFIG_XIAOZHI_USB_SCREEN_MIRROR=y",
+                "CONFIG_XIAOZHI_USB_TEXT_CHAT=y",
+                "CONFIG_XIAOZHI_ALLOW_AUTOMATIC_FIRMWARE_UPGRADE=n",
+                "CONFIG_XIAOZHI_DEVELOPMENT_IDENTITY=y",
+                "CONFIG_XIAOZHI_DEVELOPMENT_FACTORY_MAC=\"74:4d:bd:a2:c4:2c\"",
+                "CONFIG_XIAOZHI_DEVELOPMENT_MAC=\"02:21:64:63:44:5a\"",
+                "CONFIG_XIAOZHI_DEVELOPMENT_UUID=\"b67553bc-4483-4a0f-84a0-ce7e801e8bf7\"",
+                "CONFIG_XIAOZHI_AUDIO_DIAGNOSTICS=y"
+            ],
+            "sdkconfig_profile": "daleng-cn"
+        },
+        {
+            "name": "bread-compact-wifi-128x32-ai-release",
+            "sdkconfig_append": [
+                "CONFIG_OLED_SSD1306_128X32=y",
+                "CONFIG_SPIRAM_MODE_OCT=n",
+                "CONFIG_SPIRAM_MODE_QUAD=y",
+                "CONFIG_XIAOZHI_USB_SCREEN_MIRROR=n",
+                "CONFIG_XIAOZHI_USB_TEXT_CHAT=n",
+                "CONFIG_XIAOZHI_DEVELOPMENT_IDENTITY=n",
+                "CONFIG_XIAOZHI_AUDIO_DIAGNOSTICS=n",
+                "CONFIG_XIAOZHI_ALLOW_AUTOMATIC_FIRMWARE_UPGRADE=y",
+                "CONFIG_XIAOZHI_REQUIRE_RELEASE_MANIFEST=y",
+                "CONFIG_XIAOZHI_REQUIRE_TTS_TURN_TAGS=y",
+                "CONFIG_XIAOZHI_CONTROLLED_RELEASE=y",
+                "CONFIG_OTA_URL=\"\""
+            ],
+            "sdkconfig_profile": "daleng-cn"
+        },
+        {
+            "name": "bread-compact-wifi-128x32-ai-lan",
+            "sdkconfig_append": [
+                "CONFIG_OLED_SSD1306_128X32=y",
+                "CONFIG_SPIRAM_MODE_OCT=n",
+                "CONFIG_SPIRAM_MODE_QUAD=y",
+                "CONFIG_XIAOZHI_USB_SCREEN_MIRROR=n",
+                "CONFIG_XIAOZHI_USB_TEXT_CHAT=n",
+                "CONFIG_XIAOZHI_DEVELOPMENT_IDENTITY=n",
+                "CONFIG_XIAOZHI_AUDIO_DIAGNOSTICS=n",
+                "CONFIG_XIAOZHI_ALLOW_AUTOMATIC_FIRMWARE_UPGRADE=y",
+                "CONFIG_XIAOZHI_REQUIRE_RELEASE_MANIFEST=y",
+                "CONFIG_XIAOZHI_REQUIRE_TTS_TURN_TAGS=y",
+                "CONFIG_XIAOZHI_CONTROLLED_RELEASE=y",
+                "CONFIG_OTA_URL=\"\"",
+                "CONFIG_XIAOZHI_RELEASE_ALLOW_LAN_HTTP=y"
+            ],
+            "sdkconfig_profile": "daleng-cn"
         }
     ]
 }

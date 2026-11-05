@@ -11,6 +11,7 @@ Usage:
 """
 
 import argparse
+import math
 import io
 import os
 import re
@@ -734,6 +735,8 @@ def read_custom_wake_word_from_sdkconfig(sdkconfig_path):
                 # Extract string value (remove quotes)
                 value = line.split('=', 1)[1].strip('"')
                 config_values['wake_word'] = value
+            elif line.startswith('CONFIG_CUSTOM_WAKE_WORD_ALIASES='):
+                config_values['aliases'] = line.split('=', 1)[1].strip('"')
             elif 'CONFIG_CUSTOM_WAKE_WORD_DISPLAY=' in line and not line.startswith('#'):
                 # Extract string value (remove quotes)
                 value = line.split('=', 1)[1].strip('"')
@@ -747,9 +750,26 @@ def read_custom_wake_word_from_sdkconfig(sdkconfig_path):
                     try:
                         config_values['threshold'] = float(value)
                     except ValueError:
-                        print(f"Warning: Invalid threshold value: {value}")
-                        config_values['threshold'] = 20  # default (will be converted to 0.2)
+                        raise ValueError(f"Invalid custom wake word threshold: {value}")
     
+    if config_values.get('use_custom_wake_word', False):
+        if not all(config_values.get(key, '').strip() for key in ('wake_word', 'display')):
+            raise ValueError("Custom wake word requires nonempty command and display text")
+        threshold = config_values.get('threshold')
+        if threshold is None or not math.isfinite(threshold) or not 1 <= threshold <= 99:
+            raise ValueError("Custom wake word threshold must be in [1, 99]")
+
+    aliases = []
+    if config_values.get('use_custom_wake_word', False):
+        seen = {' '.join(config_values['wake_word'].split())}
+        for entry in config_values.get('aliases', '').split(';'):
+            alias = ' '.join(entry.split())
+            if not alias:
+                continue
+            if alias not in seen:
+                aliases.append(alias)
+                seen.add(alias)
+
     # Return config only if custom wake word is enabled and required fields are present
     if (config_values.get('use_custom_wake_word', False) and 
         'wake_word' in config_values and 
@@ -757,6 +777,7 @@ def read_custom_wake_word_from_sdkconfig(sdkconfig_path):
         'threshold' in config_values):
         return {
             'wake_word': config_values['wake_word'],
+            'aliases': aliases,
             'display': config_values['display'],
             'threshold': config_values['threshold'] / 100.0  # Convert to decimal (20 -> 0.2)
         }
@@ -818,10 +839,10 @@ def get_multinet_model_paths(model_names, esp_sr_model_path):
     valid_paths = []
     for model_name in model_names:
         multinet_model_path = os.path.join(esp_sr_model_path, 'multinet_model', model_name)
-        if os.path.exists(multinet_model_path):
+        if os.path.isdir(multinet_model_path) and os.listdir(multinet_model_path):
             valid_paths.append(multinet_model_path)
         else:
-            print(f"Warning: Multinet model directory not found: {multinet_model_path}")
+            raise FileNotFoundError(f"Multinet model directory missing or empty: {multinet_model_path}")
     
     return valid_paths
 
@@ -1069,10 +1090,11 @@ def main():
             "threshold": custom_wake_word_config['threshold'],
             "commands": [
                 {
-                    "command": custom_wake_word_config['wake_word'],
+                    "command": command,
                     "text": custom_wake_word_config['display'],
                     "action": "wake"
                 }
+                for command in [custom_wake_word_config['wake_word']] + custom_wake_word_config['aliases']
             ]
         }
         print(f"  custom wake word: {custom_wake_word_config['wake_word']} ({custom_wake_word_config['display']})")

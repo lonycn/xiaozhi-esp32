@@ -63,8 +63,12 @@ void Protocol::SetError(const std::string& message, const std::string& detail) {
     SetError(message + "\n" + detail);
 }
 
-void Protocol::SendAbortSpeaking(AbortReason reason) {
-    std::string message = "{\"session_id\":\"" + session_id_ + "\",\"type\":\"abort\"";
+void Protocol::SendAbortSpeaking(AbortReason reason, const std::string& session, const std::string& turn, int64_t control) {
+    if (!session.empty() && session != session_id_) return;
+    std::string message = "{\"session_id\":\"" + (session.empty() ? session_id_ : session) + "\",\"type\":\"abort\"";
+    if (turn.size() == 32 && turn.find_first_not_of("0123456789abcdef") == std::string::npos && control >= 0) {
+        message += ",\"turn_id\":\"" + turn + "\",\"control_version\":" + std::to_string(control);
+    }
     if (reason == kAbortReasonWakeWordDetected) {
         message += ",\"reason\":\"wake_word_detected\"";
     }

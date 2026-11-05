@@ -2,6 +2,11 @@
 #define OLED_DISPLAY_H
 
 #include "lvgl_display.h"
+#include "oled_face.h"
+#include "oled_idle_scene.h"
+
+#include <array>
+#include <ctime>
 
 #include <esp_lcd_panel_io.h>
 #include <esp_lcd_panel_ops.h>
@@ -20,12 +25,30 @@ private:
     lv_obj_t* side_bar_ = nullptr;
     lv_obj_t* emotion_label_ = nullptr;
     lv_obj_t* chat_message_label_ = nullptr;
+    lv_obj_t* idle_scene_ = nullptr;
+    lv_obj_t* idle_face_ = nullptr;
+    lv_obj_t* conversation_face_ = nullptr;
+    lv_obj_t* idle_clock_ = nullptr;
+    lv_obj_t* idle_mute_ = nullptr;
+    lv_obj_t* idle_battery_ = nullptr;
+    lv_timer_t* idle_timer_ = nullptr;
+    alignas(4) std::array<uint8_t, 8 + oled_idle::kWidth * oled_idle::kHeight / 8> idle_pixels_{};
+    lv_image_dsc_t idle_clock_image_{};
+    alignas(4) std::array<uint8_t, 8 + oled_face::Pixels{}.size()> face_pixels_{};
+    lv_image_dsc_t face_image_{};
+    oled_face::Animator face_animator_;
+    int face_device_state_ = -1;
+    bool idle_visible_ = false;
+    time_t idle_rendered_second_ = -1;
 
     virtual bool Lock(int timeout_ms = 0) override;
     virtual void Unlock() override;
 
     void SetupUI_128x64();
     void SetupUI_128x32();
+    void SetupIdleScene();
+    void UpdateIdleScene();
+    void UpdateFace();
 
 public:
     OledDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_handle_t panel, int width,
@@ -36,6 +59,8 @@ public:
     virtual void SetChatMessage(const char* role, const char* content) override;
     virtual void RemoveChatMessage(const char* role, const char* content) override;
     virtual bool SetEmotion(const char* emotion) override;
+    void SetStatus(const char* status) override;
+    void UpdateStatusBar(bool update_all = false) override;
     virtual void SetTheme(Theme* theme) override;
     virtual bool IsMonochrome() const override { return true; }
     void SetPowerSaveMode(bool on) override;

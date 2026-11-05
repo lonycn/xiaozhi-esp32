@@ -9,7 +9,8 @@ import re
 import subprocess
 from pathlib import Path
 from typing import Any, Optional
-from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from product_profiles import variant_sdkconfig
 
 # Switch to project root directory
 os.chdir(Path(__file__).resolve().parent.parent)
@@ -500,7 +501,7 @@ def _build_option_definitions(
     build: dict[str, Any],
 ) -> list[dict[str, Any]]:
     """Describe the curated, board-compatible options exposed to callers."""
-    sdkconfig_append = build.get("sdkconfig_append", [])
+    sdkconfig_append = variant_sdkconfig(build, Path(__file__).resolve().parents[1])
     if not isinstance(sdkconfig_append, list) or not all(isinstance(item, str) for item in sdkconfig_append):
         raise ValueError(f"build {build.get('name')!r} sdkconfig_append must be a string list")
     assignments = _sdkconfig_assignments(sdkconfig_append)
@@ -968,7 +969,7 @@ def _collect_variants(
             item for item in _get_builds_for_idf(cfg, idf_version)
             if _get_reported_name(item) == variant["name"]
         )
-        sdkconfig_append = build.get("sdkconfig_append", [])
+        sdkconfig_append = variant_sdkconfig(build, Path(__file__).resolve().parents[1])
         if not isinstance(sdkconfig_append, list) or not all(
             isinstance(item, str) for item in sdkconfig_append
         ):
@@ -1060,6 +1061,7 @@ def _select_variants_for_changes(
         "CMakeLists.txt",
         "scripts/build_default_assets.py",
         "scripts/build.py",
+        "scripts/product_profiles.py",
         "scripts/gen_lang.py",
         "scripts/versions.py",
         "dependencies.lock",
@@ -1072,6 +1074,7 @@ def _select_variants_for_changes(
         if (path in global_paths or path.startswith("components/") or
                 path.startswith("partitions/") or
                 path.startswith("sdkconfig.defaults") or
+                path.startswith("profiles/") or
                 path.startswith("scripts/ci/") or
                 (path.startswith("main/") and not path.startswith("main/boards/")) or
                 path.startswith("main/boards/common/")):
@@ -1528,7 +1531,7 @@ def build_board(
         config_filename: config.json name (default: config.json)
         name_filter: build["name"] to compile
         create_zip: package merged-binary.bin under releases/ when true
-        language: optional locale such as zh-CN; defaults to en-US when omitted
+        language: optional locale; defaults to product profile or en-US
         wake_word: optional model/alias; otherwise selected from language and board support
         build_options: optional semantic, board-validated option values
     """
@@ -1567,7 +1570,7 @@ def build_board(
         final_name = _get_release_full_name(manufacturer, build)
 
         # Process sdkconfig_append
-        build_sdkconfig_append = build.get("sdkconfig_append", [])
+        build_sdkconfig_append = variant_sdkconfig(build, Path(__file__).resolve().parents[1])
         explicit_board_cfg = _extract_board_config_from_sdkconfig_append(build_sdkconfig_append)
         board_type_config = _resolve_board_config(
             board_type,
@@ -1604,9 +1607,22 @@ def build_board(
         ]
         build_option_sdkconfig: list[str] = []
         selected_build_options: Optional[dict[str, object]] = None
+        profile_assignments = _sdkconfig_assignments(build_sdkconfig_append)
+        profile_languages = [
+            key.removeprefix("CONFIG_LANGUAGE_").replace("_", "-")
+            for key, value in profile_assignments.items()
+            if key.startswith("CONFIG_LANGUAGE_") and value == "y"
+        ]
+        if len(profile_languages) > 1:
+            raise ValueError("Product profile selects multiple languages")
         selected_language, option = _language_sdkconfig_option(
-            _DEFAULT_LANGUAGE if language is None else language
+            language if language is not None else
+            (profile_languages[0] if profile_languages else _DEFAULT_LANGUAGE)
         )
+        sdkconfig_append = [
+            item for item in sdkconfig_append
+            if not item.startswith("CONFIG_LANGUAGE_")
+        ]
         user_options.append(option)
         validation_symbols.append(
             ([option.split("=", 1)[0]], "--language")
@@ -1619,11 +1635,18 @@ def build_board(
                 requested_wake_word = (
                     "nihaoxiaozhi" if selected_language in {"zh-CN", "zh-TW"} else "hiesp"
                 )
-        (
-            selected_wake_word,
-            wake_word_options,
-            wake_word_symbols,
-        ) = _wake_word_sdkconfig_options(requested_wake_word, target)
+        if wake_word is None and profile_assignments.get("CONFIG_USE_CUSTOM_WAKE_WORD") == "y":
+            if target != "esp32s3":
+                raise ValueError("Custom MultiNet product profiles require ESP32-S3")
+            selected_wake_word = "custom"
+            wake_word_options = []
+            wake_word_symbols = ["CONFIG_USE_CUSTOM_WAKE_WORD", "CONFIG_SR_MN_CN_MULTINET7_QUANT"]
+        else:
+            (
+                selected_wake_word,
+                wake_word_options,
+                wake_word_symbols,
+            ) = _wake_word_sdkconfig_options(requested_wake_word, target)
         if selected_wake_word != "disabled" and not wake_word_supported:
             raise ValueError(
                 f"Wake-word detection is disabled or unsupported for {final_name!r}; "

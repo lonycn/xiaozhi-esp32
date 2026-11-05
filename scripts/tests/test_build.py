@@ -1464,7 +1464,7 @@ class LanguageBuildTests(unittest.TestCase):
         ):
             yield prepare, configure, validate
 
-    def test_all_variants_default_to_english_and_accept_every_language(self):
+    def test_variants_respect_product_defaults_and_accept_every_language(self):
         with contextlib.redirect_stderr(io.StringIO()):
             variants = build._collect_variants(idf_version=(6, 1, 0))
         cmake = (ROOT / "main/CMakeLists.txt").read_text(encoding="utf-8")
@@ -1493,14 +1493,24 @@ class LanguageBuildTests(unittest.TestCase):
                         target, fragment, name, _ = configure.call_args.args
                         self.assertEqual(target, variant["target"])
                         self.assertEqual(name, variant["name"])
-                        expected = language_options["en-US" if language is None else language]
+                        profiled = variant["name"].endswith(("-daleng", "-daleng-diag", "-ai-release", "-ai-lan"))
+                        default_language = "zh-CN" if profiled else "en-US"
+                        expected = language_options[default_language if language is None else language]
                         self.assertEqual(
                             [item for item in fragment if item.startswith("CONFIG_LANGUAGE_")],
                             [expected],
                         )
                         validate.assert_any_call([expected.split("=", 1)[0]], "--language")
                         models = [item for item in fragment if item.startswith("CONFIG_SR_WN_")]
-                        if variant["wake_word_supported"]:
+                        if profiled:
+                            self.assertEqual(models, [])
+                            self.assertIn("CONFIG_USE_CUSTOM_WAKE_WORD=y", fragment)
+                            self.assertIn('CONFIG_CUSTOM_WAKE_WORD_ALIASES="ni hao zong guan;zong guan zong guan"', fragment)
+                            validate.assert_any_call(
+                                ["CONFIG_USE_CUSTOM_WAKE_WORD", "CONFIG_SR_MN_CN_MULTINET7_QUANT"],
+                                "--wake-word",
+                            )
+                        elif variant["wake_word_supported"]:
                             chinese = language in {"zh-CN", "zh-TW"}
                             if target in {"esp32c3", "esp32c5", "esp32c6"}:
                                 model = "WN9S_NIHAOXIAOZHI" if chinese else "WN9S_HIESP"
@@ -1533,6 +1543,22 @@ class LanguageBuildTests(unittest.TestCase):
                     fragment = configure.call_args.args[1]
                     self.assertIn(expected, fragment)
                     validate.assert_any_call([expected.split("=", 1)[0]], "--language")
+
+    def test_explicit_cli_overrides_custom_product_profile(self):
+        with self.mock_idf() as (_, configure, _):
+            for wake_word in ("disabled", "hiesp"):
+                with self.subTest(wake_word=wake_word):
+                    build.build_board(
+                        "bread-compact-wifi", name_filter="bread-compact-wifi-128x32-ai-lan",
+                        language="en-US", wake_word=wake_word, idf_version=(6, 1, 0),
+                    )
+                    fragment = configure.call_args.args[1]
+                    self.assertIn("CONFIG_LANGUAGE_EN_US=y", fragment)
+                    self.assertNotIn("CONFIG_LANGUAGE_ZH_CN=y", fragment)
+                    self.assertIn("CONFIG_USE_CUSTOM_WAKE_WORD=n", fragment)
+                    expected = ("CONFIG_WAKE_WORD_DISABLED=y" if wake_word == "disabled"
+                                else "CONFIG_SR_WN_WN9_HIESP=y")
+                    self.assertIn(expected, fragment)
 
     def test_invalid_language_stops_before_sdk_mutations(self):
         with self.mock_idf() as (prepare, configure, _):

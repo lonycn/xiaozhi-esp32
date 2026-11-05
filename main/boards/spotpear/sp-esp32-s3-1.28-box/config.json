@@ -6,6 +6,24 @@
         {
             "name": "sp-esp32-s3-1.28-box",
             "sdkconfig_append": []
+        },
+        {
+            "name": "sp-esp32-s3-1.28-box-ai-lan",
+            "sdkconfig_append": [
+                "CONFIG_SPIRAM_MODE_OCT=y",
+                "CONFIG_SPIRAM_MODE_QUAD=n",
+                "CONFIG_XIAOZHI_USB_SCREEN_MIRROR=n",
+                "CONFIG_XIAOZHI_USB_TEXT_CHAT=n",
+                "CONFIG_XIAOZHI_DEVELOPMENT_IDENTITY=n",
+                "CONFIG_XIAOZHI_AUDIO_DIAGNOSTICS=n",
+                "CONFIG_XIAOZHI_ALLOW_AUTOMATIC_FIRMWARE_UPGRADE=y",
+                "CONFIG_XIAOZHI_REQUIRE_RELEASE_MANIFEST=y",
+                "CONFIG_XIAOZHI_REQUIRE_TTS_TURN_TAGS=y",
+                "CONFIG_XIAOZHI_CONTROLLED_RELEASE=y",
+                "CONFIG_XIAOZHI_RELEASE_ALLOW_LAN_HTTP=y",
+                "CONFIG_OTA_URL=\"http://192.168.3.66:19183/xiaozhi/ota/\""
+            ],
+            "sdkconfig_profile": "daleng-cn"
         }
     ]
 }

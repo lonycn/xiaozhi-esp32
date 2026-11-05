@@ -1,5 +1,54 @@
 menu "Xiaozhi Assistant"
 
+config XIAOZHI_USB_SCREEN_MIRROR
+    bool "Mirror monochrome OLED frames to the USB serial console"
+    depends on SOC_USB_SERIAL_JTAG_SUPPORTED && ESP_CONSOLE_USB_SERIAL_JTAG
+    default n
+    help
+        Send checksummed copies of completed OLED writes to a local USB viewer.
+        Uses one bounded frame queue and a low-priority worker, at most 4 fps.
+
+config XIAOZHI_ALLOW_AUTOMATIC_FIRMWARE_UPGRADE
+    bool "Automatically install firmware offered by the OTA server"
+    default y if !XIAOZHI_USB_SCREEN_MIRROR
+    default n
+    help
+        Keep disabled for local mirror builds so a stock OTA image cannot
+        silently replace the custom USB screen mirror. Server configuration
+        discovery and device activation continue to use the OTA endpoint.
+
+config XIAOZHI_USB_TEXT_CHAT
+    bool "Accept remote text conversations over USB"
+    depends on XIAOZHI_USB_SCREEN_MIRROR
+    default n
+    help
+        Accept bounded text requests from the local viewer and return real
+        server reply events. Text conversations do not start microphone capture.
+
+config XIAOZHI_DEVELOPMENT_IDENTITY
+    bool "Use a board-specific software MAC and development UUID"
+    depends on IDF_TARGET_ESP32S3 && XIAOZHI_USB_SCREEN_MIRROR
+    default n
+    help
+        Apply a locally administered unicast base MAC before network startup.
+        A factory-MAC guard restricts the build to the intended physical board.
+        The original UUID is retained in NVS; no eFuse fields are written.
+
+config XIAOZHI_DEVELOPMENT_FACTORY_MAC
+    string "Expected factory MAC of this physical board"
+    depends on XIAOZHI_DEVELOPMENT_IDENTITY
+    default ""
+
+config XIAOZHI_DEVELOPMENT_MAC
+    string "Software base MAC for this development device"
+    depends on XIAOZHI_DEVELOPMENT_IDENTITY
+    default ""
+
+config XIAOZHI_DEVELOPMENT_UUID
+    string "Development client UUID"
+    depends on XIAOZHI_DEVELOPMENT_IDENTITY
+    default ""
+
 config OTA_URL
     string "Default OTA URL"
     default "https://api.tenclass.net/xiaozhi/ota/"
@@ -1024,6 +1073,14 @@ config CUSTOM_WAKE_WORD
     help
         Custom Wake Word, use pinyin for Chinese, separated by spaces
 
+config CUSTOM_WAKE_WORD_ALIASES
+    string "Custom Wake Word Aliases"
+    default ""
+    depends on USE_CUSTOM_WAKE_WORD
+    help
+        Additional wake phrases separated by semicolons. Use space-separated
+        pinyin for Chinese. Every alias uses the primary wake word display text.
+
 config CUSTOM_WAKE_WORD_DISPLAY
     string "Custom Wake Word Display"
     default "小土豆"
@@ -1092,6 +1149,14 @@ config USE_AUDIO_DEBUGGER
     default n
     help
         Enable audio debugger, send audio data through UDP to the host machine
+
+config XIAOZHI_AUDIO_DIAGNOSTICS
+    bool "Log bounded microphone and wake detector diagnostics"
+    default n
+    help
+        Log microphone/AFE signal levels and wake detector counters at most once
+        per second per stage. No audio samples are transmitted. Use an explicit
+        diagnostic build when investigating microphone or wake detection faults.
 
 menu "WiFi Configuration Method"
     help
@@ -1246,3 +1311,22 @@ menu "TAIJIPAI_S3_CONFIG"
 endmenu
 
 endmenu
+
+menu "Controlled ESP32 release safety"
+    config XIAOZHI_REQUIRE_RELEASE_MANIFEST
+        bool "Require a controlled SHA256/board/assets release manifest"
+        default n
+    config XIAOZHI_REQUIRE_TTS_TURN_TAGS
+        bool "Reject untagged TTS lifecycle messages"
+        default n
+    config XIAOZHI_CONTROLLED_RELEASE
+        bool "Pin release WebSocket audio to v1 and require HTTPS OTA"
+        default n
+endmenu
+
+config XIAOZHI_RELEASE_ALLOW_LAN_HTTP
+    bool "Development candidate: allow literal private/loopback HTTP and WS"
+    default n
+    help
+        Development-only exception. Never permits public HTTP or DNS hostnames.
+        Download and receipt origins remain pinned to the configured OTA origin.
