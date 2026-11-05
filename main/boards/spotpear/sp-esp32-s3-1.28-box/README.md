@@ -29,3 +29,9 @@ Xiaozhi Assistant -> Board Type -> Spotpear ESP32-S3-1.28-BOX
 ```bash
 idf.py build
 ```
+
+## 本地大冷总管局域网变体
+
+`sp-esp32-s3-1.28-box-ai-lan` 使用已验证的 2.5.23 业务源码、16 MB Flash 和 8 MB Octal PSRAM。保留此板 GC9A01 240×240 屏幕与 ES8311 引脚。使用本机局域网 OTA/网关、自定义大冷总管唤醒和现有停止/退出控制；固件要求校验发行清单，USB 保留日志。保留各板自己的 MAC、UUID 与 Wi-Fi 配置，不复制旧 OLED 板的身份。触摸芯片不存在时继续使用现有非触摸回退。
+
+构建：`python3 scripts/build.py spotpear/sp-esp32-s3-1.28-box --name sp-esp32-s3-1.28-box-ai-lan`。本变体使用彩屏界面，OLED 专用的 128×32 像素绘图不适用于此屏幕。
