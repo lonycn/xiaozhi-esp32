@@ -737,6 +737,8 @@ def read_custom_wake_word_from_sdkconfig(sdkconfig_path):
                 config_values['wake_word'] = value
             elif line.startswith('CONFIG_CUSTOM_WAKE_WORD_ALIASES='):
                 config_values['aliases'] = line.split('=', 1)[1].strip('"')
+            elif line.startswith('CONFIG_CUSTOM_WAKE_WORD_ALIAS_DISPLAYS='):
+                config_values['alias_displays'] = line.split('=', 1)[1].strip('"')
             elif 'CONFIG_CUSTOM_WAKE_WORD_DISPLAY=' in line and not line.startswith('#'):
                 # Extract string value (remove quotes)
                 value = line.split('=', 1)[1].strip('"')
@@ -759,15 +761,26 @@ def read_custom_wake_word_from_sdkconfig(sdkconfig_path):
         if threshold is None or not math.isfinite(threshold) or not 1 <= threshold <= 99:
             raise ValueError("Custom wake word threshold must be in [1, 99]")
 
-    aliases = []
+    aliases, alias_displays = [], []
     if config_values.get('use_custom_wake_word', False):
-        seen = {' '.join(config_values['wake_word'].split())}
-        for entry in config_values.get('aliases', '').split(';'):
+        config_values['wake_word'] = ' '.join(config_values['wake_word'].split())
+        config_values['display'] = ' '.join(config_values['display'].split())
+        entries = config_values.get('aliases', '').split(';')
+        labels = config_values.get('alias_displays', '')
+        labeled = bool(labels)
+        labels = [' '.join(label.split()) for label in labels.split(';')]
+        if labeled and len(labels) != len(entries):
+            raise ValueError("Custom wake aliases and display labels must have equal counts")
+        seen = {config_values['wake_word']}
+        for i, entry in enumerate(entries):
             alias = ' '.join(entry.split())
+            if labeled and (not alias or not labels[i] or alias in seen):
+                raise ValueError("Labeled wake aliases must be nonempty and unique")
             if not alias:
                 continue
             if alias not in seen:
                 aliases.append(alias)
+                alias_displays.append(labels[i] if labeled else config_values['display'])
                 seen.add(alias)
 
     # Return config only if custom wake word is enabled and required fields are present
@@ -778,6 +791,7 @@ def read_custom_wake_word_from_sdkconfig(sdkconfig_path):
         return {
             'wake_word': config_values['wake_word'],
             'aliases': aliases,
+            'alias_displays': alias_displays,
             'display': config_values['display'],
             'threshold': config_values['threshold'] / 100.0  # Convert to decimal (20 -> 0.2)
         }
@@ -1091,10 +1105,13 @@ def main():
             "commands": [
                 {
                     "command": command,
-                    "text": custom_wake_word_config['display'],
+                    "text": display,
                     "action": "wake"
                 }
-                for command in [custom_wake_word_config['wake_word']] + custom_wake_word_config['aliases']
+                for command, display in zip(
+                    [custom_wake_word_config['wake_word']] + custom_wake_word_config['aliases'],
+                    [custom_wake_word_config['display']] + custom_wake_word_config['alias_displays'],
+                )
             ]
         }
         print(f"  custom wake word: {custom_wake_word_config['wake_word']} ({custom_wake_word_config['display']})")

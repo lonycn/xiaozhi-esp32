@@ -1,6 +1,13 @@
-# 大冷总管：本机 ESP32-S3 自定义唤醒词
+# ESP32-S3 本地唤醒词
 
-本方案使用 ESP-SR 2.4.7 的中文 MultiNet7 在设备本地识别 `da leng zong guan`，命中后沿用小智正常的唤醒、收音和云端对话流程。当前唤醒短语为“大冷总管”、“你好总管”和“总管总管”；显示及发送给服务器的名称统一为“大冷总管”。这是通用命令词模型的自定义唤醒用法，远场、噪声和误唤醒表现仍需现场测量。
+OLED 和圆屏的定制变体从 2.5.24 起使用以下四个唤醒词，开机提示显示各自的中文名称。识别命中后发送实际匹配的名称；“大冷总管”不再是配置的唤醒词。
+
+| 唤醒词 | MultiNet7 拼音 |
+| --- | --- |
+| 你好总管 | `ni hao zong guan` |
+| 总管总管 | `zong guan zong guan` |
+| 你好小云 | `ni hao xiao yun` |
+| 小云小云 | `xiao yun xiao yun` |
 
 ## 构建
 
@@ -11,28 +18,28 @@ source /Users/lengwang/code/esp32/tools/activate-esp-idf.sh
 python3 scripts/build.py bread-compact-wifi --name bread-compact-wifi-128x32-usb-mirror-devmac-daleng
 ```
 
-这是当前实物的专用变体，继承原 `-devmac` 配置：128×32 OLED、Quad PSRAM、USB 屏幕同步及文字输入、关闭自动固件升级、原开发身份。固定开发身份只适用于当前主板，不可直接复制给其他设备。
+这是 OLED USB 调试变体，继承原 `-devmac` 配置：128×32 OLED、Quad PSRAM、USB 屏幕同步及文字输入、关闭自动固件升级、原开发身份。固定开发身份只适用于当前主板，不可直接复制给其他设备。
 
-主词为 `da leng zong guan`，`CONFIG_CUSTOM_WAKE_WORD_ALIASES` 配置两个附加短语：`ni hao zong guan;zong guan zong guan`。附加短语以分号分隔，空白项忽略、重复项去重，全部映射到主词显示名称。资源包和无资源分区的后备初始化都支持该配置。
-
-词条和模型选择保存在 `main/boards/bread-compact-wifi/config.json`，由构建脚本生成配置，不直接修改生成的 `sdkconfig`。配置使用 `CONFIG_USE_CUSTOM_WAKE_WORD=y`、`CONFIG_SR_MN_CN_MULTINET7_QUANT=y`，初始阈值为 20（写入资源索引后为 0.2）。阈值越低越敏感，不代表识别成功率。
+正常使用的 OLED 与圆屏 AI-LAN 变体见[编译说明](../README.md#编译)。共享配置位于 [`profiles/daleng-cn.defaults`](../profiles/daleng-cn.defaults)，保留中文 MultiNet7 和阈值 20。主词为 `ni hao zong guan`，另外三个拼音与中文标签分别由 `CONFIG_CUSTOM_WAKE_WORD_ALIASES` 和 `CONFIG_CUSTOM_WAKE_WORD_ALIAS_DISPLAYS` 配置，以分号分隔并按顺序对应。资源包和无资源分区时的后备初始化使用相同的四词配置。构建脚本生成 `sdkconfig`。
 
 构建生成的 `build/generated_assets.bin` 必须包含：
 
 - `srmodels.bin` 中的 `mn7_cn` 和 `fst`，不打包旧 WakeNet 模型。
 - `index.json` 中 `multinet_model.language=cn`、`duration=3000`、`threshold=0.2`。
-- 三个唤醒条目：`da leng zong guan`、`ni hao zong guan`、`zong guan zong guan`，每项均为 `text="大冷总管"`、`action="wake"`。
+- 四个唤醒条目，拼音与中文标签如上表，均为 `action="wake"`。
 - 原 OLED 中文字体。
 
 资源构建现在拒绝缺失或空的 MultiNet 模型目录（包括 `fst`）、空词条及无效阈值，避免输出缺少唤醒能力的资源包。
 
-## 本机安装与回退
+## 安装与回退
 
-当前交付应使用上述专用变体的完整应用及匹配资源。2026-10-28 曾尝试仅更新资源：虽然模型和词条初始化成功，但 2026-10-29 用户报告实体唤醒无反应。随后完整重编译并更新启用自定义唤醒的诊断应用，实际记录到麦克风输入、MultiNet 检测和待机唤醒，用户确认能唤醒。由于应用配置、诊断日志和重启同时发生，未单独定位先前失败根因，不能据此承诺资源更新足以完成此切换。
+更新设备时使用同一构建的应用和资源包；仅更新应用可能仍从旧资源读入旧词表。保留原应用、资源及设备配置，方便回退。
+
+以下是早期唤醒词更新的历史记录。2026-10-28 曾尝试仅更新资源：虽然模型和词条初始化成功，但 2026-10-29 用户报告实体唤醒无反应。随后完整重编译并更新启用自定义唤醒的诊断应用，实际记录到麦克风输入、MultiNet 检测和待机唤醒，用户确认能唤醒。由于应用配置、诊断日志和重启同时发生，未单独定位先前失败根因，不能据此承诺资源更新足以完成此切换。
 
 本机应用分区为 `0x20000`，大小 `0x3f0000`；资源分区为 `0x800000`，容量 8 MiB。地址必须与实际分区表核对，不能直接套用于其他固件。本次不清空 NVS，不重新激活，也不修改原板型引脚。
 
-本次发布目录由以下文件记录：
+早期三词版本的发布目录由以下文件记录：
 
 `/Users/lengwang/code/esp32/.local/releases/daleng-wakeword-path.txt`
 
@@ -40,7 +47,7 @@ python3 scripts/build.py bread-compact-wifi --name bread-compact-wifi-128x32-usb
 
 `/Users/lengwang/code/esp32/.local/backups/pre-daleng-wakeword-path.txt`
 
-当前三短语发布目录包含 `xiaozhi.bin`、`assets.bin`、资源检查结果、构建和测试日志，以及可恢复到本次已确认可唤醒诊断版的 `rollback-diagnostic-app.bin` / `rollback-singleword-assets.bin`。联网及身份配置另有本机私有完整备份。诊断版路径记录在 `.local/releases/audio-diagnostics-path.txt`，修改前完整 Flash 路径记录在 `.local/backups/pre-audio-diagnostics-path.txt`。
+历史三短语发布目录包含 `xiaozhi.bin`、`assets.bin`、资源检查结果、构建和测试日志，以及可恢复到本次已确认可唤醒诊断版的 `rollback-diagnostic-app.bin` / `rollback-singleword-assets.bin`。联网及身份配置另有本机私有完整备份。诊断版路径记录在 `.local/releases/audio-diagnostics-path.txt`，修改前完整 Flash 路径记录在 `.local/backups/pre-audio-diagnostics-path.txt`。
 
 回退应使用发布记录指定的匹配应用与资源组合。只回写旧资源不能恢复已经替换的应用；完整回退需要匹配的应用、资源及分区表。备份中的联网及身份配置不应清空。
 
@@ -52,15 +59,15 @@ python3 scripts/build.py bread-compact-wifi --name bread-compact-wifi-128x32-usb
 
 现场应分别检查：
 
-1. 启动日志实际列出 `mn7_cn`、`fst` 及“大冷总管”命令，进入待机且没有异常重启。
-2. 真实麦克风输入“大冷总管”后出现检测命中，进入收音并得到真实回复。
+1. 启动日志实际列出 `mn7_cn`、`fst` 及上述四个命令，进入待机且没有异常重启。
+2. 真人分别说四个新词，确认每个都能唤醒、收音并得到回复；用旧词“大冷总管”检查是否误唤醒。
 3. “你好小智”和相近词的误触发、不同说话人及 1 米/3 米距离、风扇等环境噪声。
 4. 连续唤醒、对话结束回到待机、重启、播放期间的行为和断线恢复。
 5. 128×32 OLED、USB 校验帧、远程文字输入和原 DSH 对话接入。
 
 发布目录的验收记录区分合成语音声学测试、远程文字对话和真人现场测试；没有实际完成的项目保留为待验收。
 
-## 本次结果（2026-10-28）
+## 历史结果（2026-10-28）
 
 - ESP-IDF v6.0.1 完整构建通过，116 项固件主机测试及 17 项屏幕/文字对话测试通过。
 - 新资源 2,951,600 字节，容量上限 8,388,608 字节；实际解包核对词条、模型、阈值和原字体。

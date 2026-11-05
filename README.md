@@ -1,6 +1,6 @@
 # ESP32 语音终端固件
 
-当前版本：**2.5.23**。本仓库维护 OLED 与圆屏两种 ESP32-S3 语音终端固件，配合 [xiaozhi-server](https://github.com/lonycn/xiaozhi-server) 使用。
+当前版本：**2.5.24**。本仓库维护 OLED 与圆屏两种 ESP32-S3 语音终端固件，配合 [xiaozhi-server](https://github.com/lonycn/xiaozhi-server) 使用。
 
 ESP32 负责采音、播放、唤醒、屏幕和设备控制；语音识别、模型对话与语音合成由 Server 提供。
 
@@ -15,7 +15,7 @@ ESP32 负责采音、播放、唤醒、屏幕和设备控制；语音识别、�
 
 ## 主要功能
 
-- “大冷总管 / 你好总管 / 总管总管”本地唤醒，支持停止、暂停和退出口令。
+- “你好总管 / 总管总管 / 你好小云 / 小云小云”本地唤醒，支持停止、暂停和退出口令。
 - WebSocket 语音对话、流式播放与设备端 MCP 工具。
 - OLED 时钟、Wi-Fi 状态、表情与微动作；圆屏使用彩屏界面。
 - 应用 OTA 按板型、版本和资源清单校验，设备身份与联网配置保存在 NVS。
@@ -37,7 +37,7 @@ python3 scripts/build.py bread-compact-wifi   --name bread-compact-wifi-128x32-a
 python3 scripts/build.py spotpear/sp-esp32-s3-1.28-box   --name sp-esp32-s3-1.28-box-ai-lan
 ```
 
-以上两个变体共享 `profiles/daleng-cn.defaults`，默认中文界面及三条自定义唤醒词。显式传入 `--language` 或 `--wake-word` 可覆盖对应默认值；正式打包仍会检查三条唤醒词。
+以上两个变体共享 `profiles/daleng-cn.defaults`，默认中文界面及四条自定义唤醒词。显式传入 `--language` 或 `--wake-word` 可覆盖对应默认值；正式打包仍会检查四条唤醒词。
 
 编译脚本会更新本机 `sdkconfig` 与 `build/`；以上命令只编译，不烧录。连接设备前需明确配置自己的 OTA 服务地址：OLED 受控变体默认留空，圆屏配置中的 LAN 地址是已有开发环境的值。OLED 的外部配置片段和打包方式见[发布说明](main/boards/bread-compact-wifi/RELEASE_AI.md)。
 
@@ -57,6 +57,6 @@ python3 scripts/build.py spotpear/sp-esp32-s3-1.28-box   --name sp-esp32-s3-1.28
 python3 -m unittest discover -s scripts/tests -v
 ```
 
-[2.5.23 版本记录](docs/releases/2.5.23.md)说明源码基线与验证范围。`main` 为合并后的主分支，`Dev` 为日常开发分支；固件包、设备备份、Wi-Fi 凭据和本地运行文件不纳入源码提交。
+[2.5.24 版本记录](docs/releases/2.5.24.md)说明源码基线与验证范围。`main` 为合并后的主分支，`Dev` 为日常开发分支；固件包、设备备份、Wi-Fi 凭据和本地运行文件不纳入源码提交。
 
 本项目基于 [78/xiaozhi-esp32](https://github.com/78/xiaozhi-esp32) 定制，保留上游源代码和 MIT 许可，详见 [LICENSE](LICENSE)。

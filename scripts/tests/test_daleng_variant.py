@@ -25,11 +25,14 @@ class DalengVariantTests(unittest.TestCase):
             self.assertEqual(options['CONFIG_' + symbol], 'n')
         for symbol in ('USE_CUSTOM_WAKE_WORD', 'SR_MN_CN_MULTINET7_QUANT'):
             self.assertEqual(options['CONFIG_' + symbol], 'y')
-        self.assertEqual(options['CONFIG_CUSTOM_WAKE_WORD'], '"da leng zong guan"')
-        self.assertEqual(options['CONFIG_CUSTOM_WAKE_WORD_DISPLAY'], '"大冷总管"')
+        self.assertEqual(options['CONFIG_CUSTOM_WAKE_WORD'], '"ni hao zong guan"')
+        self.assertEqual(options['CONFIG_CUSTOM_WAKE_WORD_DISPLAY'], '"你好总管"')
         self.assertEqual(options['CONFIG_CUSTOM_WAKE_WORD_THRESHOLD'], '20')
         self.assertEqual(options['CONFIG_CUSTOM_WAKE_WORD_ALIASES'],
-                         '"ni hao zong guan;zong guan zong guan"')
+                         '"zong guan zong guan;ni hao xiao yun;xiao yun xiao yun"')
+
+        self.assertEqual(options['CONFIG_CUSTOM_WAKE_WORD_ALIAS_DISPLAYS'],
+                         '"总管总管;你好小云;小云小云"')
 
 
 if __name__ == '__main__':

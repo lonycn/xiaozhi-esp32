@@ -25,7 +25,9 @@ LAN_BOARD_NAME = 'bread-compact-wifi-128x32-ai-lan'
 FLASH = 16 * 1024 * 1024
 APP_OFFSET, APP_SIZE = 0x20000, 0x3f0000
 ASSETS_OFFSET, ASSETS_SIZE = 0x800000, 0x800000
-WAKE_WORDS = {'da leng zong guan', 'ni hao zong guan', 'zong guan zong guan'}
+WAKE_PHRASES = {'ni hao zong guan': '你好总管', 'zong guan zong guan': '总管总管',
+                'ni hao xiao yun': '你好小云', 'xiao yun xiao yun': '小云小云'}
+WAKE_WORDS = set(WAKE_PHRASES)
 FILES = {'bootloader/bootloader.bin': 0, 'partition_table/partition-table.bin': 0x8000,
          'ota_data_initial.bin': 0xd000, 'xiaozhi.bin': APP_OFFSET,
          'generated_assets.bin': ASSETS_OFFSET}
@@ -115,10 +117,11 @@ def check_assets(image):
     require(index.get('srmodels') == 'srmodels.bin', 'missing model index')
     model = index.get('multinet_model') or {}
     commands = model.get('commands') or []
-    require(model.get('language') == 'cn' and isinstance(commands, list) and len(commands) == 3
-            and all(isinstance(c, dict) and c.get('action') == 'wake' and c.get('text') == '大冷总管' for c in commands)
-            and {c.get('command') for c in commands} == WAKE_WORDS,
-            'missing three wake phrases')
+    require(model.get('language') == 'cn' and isinstance(commands, list) and len(commands) == len(WAKE_PHRASES)
+            and all(isinstance(c, dict) and c.get('action') == 'wake'
+                    and isinstance(c.get('command'), str) and isinstance(c.get('text'), str) for c in commands)
+            and {(c.get('command'), c.get('text')) for c in commands} == set(WAKE_PHRASES.items()),
+            'missing four wake phrases or display labels')
     packed = files['srmodels.bin']
     require(len(packed) >= 4, 'truncated wake models')
     count = struct.unpack_from('<I', packed)[0]
@@ -230,8 +233,10 @@ def package(snapshot, output, ota_url, app_version, previous_version, assets_ver
                 'CONFIG_XIAOZHI_REQUIRE_TTS_TURN_TAGS': 'y',
                 'CONFIG_XIAOZHI_CONTROLLED_RELEASE': 'y',
                 'CONFIG_XIAOZHI_ALLOW_AUTOMATIC_FIRMWARE_UPGRADE': 'y',
-                'CONFIG_CUSTOM_WAKE_WORD': '"da leng zong guan"',
-                'CONFIG_CUSTOM_WAKE_WORD_ALIASES': '"ni hao zong guan;zong guan zong guan"'}
+                'CONFIG_CUSTOM_WAKE_WORD': '"ni hao zong guan"',
+                'CONFIG_CUSTOM_WAKE_WORD_DISPLAY': '"你好总管"',
+                'CONFIG_CUSTOM_WAKE_WORD_ALIAS_DISPLAYS': '"总管总管;你好小云;小云小云"',
+                'CONFIG_CUSTOM_WAKE_WORD_ALIASES': '"zong guan zong guan;ni hao xiao yun;xiao yun xiao yun"'}
     require(all(cfg.get(k) == v for k, v in required.items()), 'release sdkconfig mismatch')
     require(enabled(cfg, 'CONFIG_XIAOZHI_RELEASE_ALLOW_LAN_HTTP') == development_lan, 'LAN development setting mismatch')
     require(not any(enabled(cfg, k) for k in ('CONFIG_XIAOZHI_USB_SCREEN_MIRROR', 'CONFIG_XIAOZHI_USB_TEXT_CHAT',

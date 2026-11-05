@@ -1079,7 +1079,15 @@ config CUSTOM_WAKE_WORD_ALIASES
     depends on USE_CUSTOM_WAKE_WORD
     help
         Additional wake phrases separated by semicolons. Use space-separated
-        pinyin for Chinese. Every alias uses the primary wake word display text.
+        pinyin for Chinese. Labels can be provided with CUSTOM_WAKE_WORD_ALIAS_DISPLAYS.
+
+config CUSTOM_WAKE_WORD_ALIAS_DISPLAYS
+    string "Custom Wake Word Alias Display Texts"
+    default ""
+    depends on USE_CUSTOM_WAKE_WORD
+    help
+        Optional display texts separated by semicolons, one per alias in the
+        same order. Empty uses the primary display text for every alias.
 
 config CUSTOM_WAKE_WORD_DISPLAY
     string "Custom Wake Word Display"

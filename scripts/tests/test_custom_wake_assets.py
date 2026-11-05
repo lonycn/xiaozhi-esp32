@@ -100,3 +100,50 @@ class CustomWakeAssetsTest(unittest.TestCase):
                 })
                 if aliases is None:
                     self.assertEqual(BUILD.read_custom_wake_word_from_sdkconfig(config)['aliases'], [])
+
+    def test_product_profile_emits_four_distinct_labels(self):
+        import sys
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        from product_profiles import variant_sdkconfig
+        source = Path(__file__).resolve().parents[2]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = root / 'sdkconfig'
+            config.write_text('\n'.join(variant_sdkconfig({'sdkconfig_profile': 'daleng-cn'}, source)))
+            for name in ('mn7_cn', 'fst'):
+                model = root / 'multinet_model' / name
+                model.mkdir(parents=True)
+                (model / 'data').write_bytes(b'model')
+
+            def build_index(*args, **kwargs):
+                BUILD.generate_index_json(directory, 'srmodels.bin', None, [],
+                                          multinet_model_info=args[6])
+                return True
+
+            with patch('sys.argv', ['build_default_assets', '--sdkconfig', str(config),
+                                    '--esp_sr_model_path', directory,
+                                    '--output', str(root / 'assets.bin')]), \
+                 patch.object(BUILD, 'build_assets_integrated', side_effect=build_index):
+                BUILD.main()
+            commands = json.loads((root / 'index.json').read_text())['multinet_model']['commands']
+            self.assertEqual(commands, [
+                {'command': command, 'text': text, 'action': 'wake'}
+                for command, text in [('ni hao zong guan', '你好总管'),
+                                      ('zong guan zong guan', '总管总管'),
+                                      ('ni hao xiao yun', '你好小云'),
+                                      ('xiao yun xiao yun', '小云小云')]])
+
+    def test_misaligned_blank_and_duplicate_labeled_aliases_fail(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / 'sdkconfig'
+            base = ('CONFIG_USE_CUSTOM_WAKE_WORD=y\n'
+                    'CONFIG_CUSTOM_WAKE_WORD="ni hao zong guan"\n'
+                    'CONFIG_CUSTOM_WAKE_WORD_DISPLAY="你好总管"\n'
+                    'CONFIG_CUSTOM_WAKE_WORD_THRESHOLD=20\n')
+            for aliases, labels in [('one;two', '一'), ('one;two', '一;'),
+                                    ('one;one', '一;一'), ('ni hao zong guan', '重复')]:
+                with self.subTest(aliases=aliases, labels=labels):
+                    config.write_text(base + f'CONFIG_CUSTOM_WAKE_WORD_ALIASES="{aliases}"\n'
+                                      f'CONFIG_CUSTOM_WAKE_WORD_ALIAS_DISPLAYS="{labels}"\n')
+                    with self.assertRaises(ValueError):
+                        BUILD.read_custom_wake_word_from_sdkconfig(config)

@@ -1505,7 +1505,7 @@ class LanguageBuildTests(unittest.TestCase):
                         if profiled:
                             self.assertEqual(models, [])
                             self.assertIn("CONFIG_USE_CUSTOM_WAKE_WORD=y", fragment)
-                            self.assertIn('CONFIG_CUSTOM_WAKE_WORD_ALIASES="ni hao zong guan;zong guan zong guan"', fragment)
+                            self.assertIn('CONFIG_CUSTOM_WAKE_WORD_ALIASES="zong guan zong guan;ni hao xiao yun;xiao yun xiao yun"', fragment)
                             validate.assert_any_call(
                                 ["CONFIG_USE_CUSTOM_WAKE_WORD", "CONFIG_SR_MN_CN_MULTINET7_QUANT"],
                                 "--wake-word",

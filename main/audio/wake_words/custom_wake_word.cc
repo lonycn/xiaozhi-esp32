@@ -1,4 +1,5 @@
 #include "custom_wake_word.h"
+#include "custom_wake_phrases.h"
 #include "../voice_control_commands.h"
 #include "assets.h"
 #include "audio_diagnostics.h"
@@ -95,44 +96,23 @@ bool CustomWakeWord::Initialize(AudioCodec* codec, srmodel_list_t* models_list) 
         owns_models_ = models_ != nullptr;
 #ifdef CONFIG_CUSTOM_WAKE_WORD
         threshold_ = CONFIG_CUSTOM_WAKE_WORD_THRESHOLD / 100.0f;
-        auto add_phrase = [this](const std::string& phrase) {
-            std::string normalized;
-            bool pending_space = false;
-            for (char ch : phrase) {
-                if (ch == ' ' || ch == '\t' || ch == '\r' || ch == '\n' || ch == '\f' ||
-                    ch == '\v') {
-                    pending_space = !normalized.empty();
-                } else {
-                    if (pending_space) {
-                        normalized += ' ';
-                    }
-                    normalized += ch;
-                    pending_space = false;
-                }
-            }
-            if (normalized.empty()) {
-                return;
-            }
-            for (const auto& command : commands_) {
-                if (command.command == normalized) {
-                    return;
-                }
-            }
-            commands_.push_back({normalized, CONFIG_CUSTOM_WAKE_WORD_DISPLAY, "wake"});
-        };
-        add_phrase(CONFIG_CUSTOM_WAKE_WORD);
+        std::string aliases;
+        std::string alias_displays;
 #ifdef CONFIG_CUSTOM_WAKE_WORD_ALIASES
-        const std::string aliases = CONFIG_CUSTOM_WAKE_WORD_ALIASES;
-        size_t start = 0;
-        while (start <= aliases.size()) {
-            size_t end = aliases.find(';', start);
-            add_phrase(aliases.substr(start, end == std::string::npos ? end : end - start));
-            if (end == std::string::npos) {
-                break;
-            }
-            start = end + 1;
-        }
+        aliases = CONFIG_CUSTOM_WAKE_WORD_ALIASES;
 #endif
+#ifdef CONFIG_CUSTOM_WAKE_WORD_ALIAS_DISPLAYS
+        alias_displays = CONFIG_CUSTOM_WAKE_WORD_ALIAS_DISPLAYS;
+#endif
+        std::vector<custom_wake_phrases::Phrase> phrases;
+        if (!custom_wake_phrases::Parse(CONFIG_CUSTOM_WAKE_WORD, CONFIG_CUSTOM_WAKE_WORD_DISPLAY,
+                                        aliases, alias_displays, phrases)) {
+            ESP_LOGE(TAG, "Invalid custom wake phrase labels");
+            return false;
+        }
+        for (const auto& phrase : phrases) {
+            commands_.push_back({phrase.command, phrase.text, "wake"});
+        }
 #endif
     } else {
         models_ = models_list;
@@ -175,12 +155,13 @@ bool CustomWakeWord::Initialize(AudioCodec* codec, srmodel_list_t* models_list) 
         esp_mn_commands_add(i + 1, commands_[i].command.c_str());
     }
     esp_mn_commands_update();
+    std::vector<std::pair<int, std::string>> wake_phrases;
     for (size_t i = 0; i < commands_.size(); ++i) {
         if (commands_[i].action == "wake") {
-            playback_wake_filter_.Configure(i + 1, commands_[i].text);
-            break;
+            wake_phrases.emplace_back(i + 1, commands_[i].text);
         }
     }
+    playback_wake_filter_.Configure(wake_phrases);
 
     multinet_->print_active_speech_commands(multinet_model_data_);
 #if CONFIG_SEND_WAKE_WORD_DATA
@@ -256,7 +237,7 @@ void CustomWakeWord::FeedSamples(const int16_t* data, size_t samples, bool mono)
     } else {
         input_buffer_.insert(input_buffer_.end(), data, data + samples);
     }
-    
+
     int chunksize = multinet_->get_samp_chunksize(multinet_model_data_);
     while (input_buffer_.size() >= chunksize) {
 #if CONFIG_SEND_WAKE_WORD_DATA
@@ -273,18 +254,22 @@ void CustomWakeWord::FeedSamples(const int16_t* data, size_t samples, bool mono)
                                : 0);
 #endif
         if (mn_state == ESP_MN_STATE_DETECTED) {
-            esp_mn_results_t *mn_result = multinet_->get_results(multinet_model_data_);
+            esp_mn_results_t* mn_result = multinet_->get_results(multinet_model_data_);
+            const auto detected_at_ms = esp_timer_get_time() / 1000;
+            // An echoed top candidate must not wake through a weaker alternative.
             const bool playback_echo =
-                mn_result->num > 0 && playback_wake_filter_.Suppresses(mn_result->command_id[0],
-                                                                       esp_timer_get_time() / 1000);
+                mn_result->num > 0 &&
+                playback_wake_filter_.Suppresses(mn_result->command_id[0], detected_at_ms);
             for (int i = 0; i < mn_result->num && running_; i++) {
-                ESP_LOGI(TAG, "Custom wake word detected: command_id=%d, string=%s, prob=%f", 
-                        mn_result->command_id[i], mn_result->string, mn_result->prob[i]);
+                ESP_LOGI(TAG, "Custom wake word detected: command_id=%d, string=%s, prob=%f",
+                         mn_result->command_id[i], mn_result->string, mn_result->prob[i]);
                 const int index = mn_result->command_id[i] - 1;
                 if (index < 0 || index >= static_cast<int>(commands_.size()))
                     continue;
                 auto& command = commands_[index];
-                if (command.action == "wake" && playback_echo) {
+                if (command.action == "wake" &&
+                    (playback_echo ||
+                     playback_wake_filter_.Suppresses(mn_result->command_id[i], detected_at_ms))) {
                     ESP_LOGI(TAG, "Ignored self-spoken wake word: %s", command.command.c_str());
                     continue;
                 }
@@ -310,7 +295,7 @@ void CustomWakeWord::FeedSamples(const int16_t* data, size_t samples, bool mono)
             ESP_LOGD(TAG, "Command word detection timeout, cleaning state");
             multinet_->clean(multinet_model_data_);
         }
-        
+
         if (!running_) {
             break;
         }

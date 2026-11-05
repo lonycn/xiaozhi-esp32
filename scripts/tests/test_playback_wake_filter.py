@@ -8,7 +8,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 
 
 class PlaybackWakeFilterTest(unittest.TestCase):
-    def test_spoken_name_filters_only_the_primary_wake_command(self):
+    def test_spoken_phrases_filter_independently_and_preserve_controls(self):
         source = r'''
 #include "main/audio/playback_wake_filter.h"
 #include <cassert>
@@ -36,6 +36,28 @@ int main() {
     filter.Clear();
     recognition.join();
     assert(!filter.Suppresses(1, 1000));
+    const std::vector<std::pair<int, std::string>> phrases = {
+        {1, "你好总管"}, {2, "总管总管"}, {3, "你好小云"}, {4, "小云小云"}};
+    filter.Configure(phrases);
+    for (const auto& [id, text] : phrases) {
+        filter.Clear();
+        filter.SetPlaybackText(text, 2000);
+        for (int other = 1; other <= 4; ++other)
+            assert(filter.Suppresses(other, 2000) == (other == id));
+        assert(!filter.Suppresses(5, 2000));  // stop
+        assert(!filter.Suppresses(6, 2000));  // exit
+        filter.SetPlaybackText("", 2000);
+        assert(filter.Suppresses(id, 2599));
+        assert(!filter.Suppresses(id, 2600));
+    }
+    filter.Clear();
+    filter.SetPlaybackText("大冷总管", 3000);
+    for (int id = 1; id <= 4; ++id) assert(!filter.Suppresses(id, 3000));
+    filter.SetPlaybackText("你好小云", 3000);
+    filter.SetPlaybackText("小云小云", 3100);
+    assert(filter.Suppresses(3, 3699));
+    assert(!filter.Suppresses(3, 3700));
+    assert(filter.Suppresses(4, 3700));
     filter.Configure(7, "");
     filter.SetPlaybackText("任意文本", 1000);
     assert(!filter.Suppresses(7, 1000));

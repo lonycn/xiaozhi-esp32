@@ -1,6 +1,6 @@
 # 128×32 AI 正式固件候选
 
-`bread-compact-wifi-128x32-ai-release` 是独立 OTA `BOARD_NAME`，板型仍为 `bread-compact-wifi`，仅面向 ESP32-S3、16 MB Flash、Quad PSRAM 和 128×32 OLED。它使用“大冷总管 / 你好总管 / 总管总管”三条 MultiNet7 唤醒词。USB 屏幕镜像、USB 文本、软件开发身份及持续音频诊断关闭。自动更新由设备的严格发布清单验证和 Server 的 `automatic` 策略共同控制；开发变体不受此配置影响。该变体依赖 `CONFIG_XIAOZHI_CONTROLLED_RELEASE`、`CONFIG_XIAOZHI_REQUIRE_RELEASE_MANIFEST` 和 `CONFIG_XIAOZHI_REQUIRE_TTS_TURN_TAGS` 实现，缺任一项不能发布。
+`bread-compact-wifi-128x32-ai-release` 是独立 OTA `BOARD_NAME`，板型仍为 `bread-compact-wifi`，仅面向 ESP32-S3、16 MB Flash、Quad PSRAM 和 128×32 OLED。它使用“你好总管 / 总管总管 / 你好小云 / 小云小云”四条 MultiNet7 唤醒词。USB 屏幕镜像、USB 文本、软件开发身份及持续音频诊断关闭。自动更新由设备的严格发布清单验证和 Server 的 `automatic` 策略共同控制；开发变体不受此配置影响。该变体依赖 `CONFIG_XIAOZHI_CONTROLLED_RELEASE`、`CONFIG_XIAOZHI_REQUIRE_RELEASE_MANIFEST` 和 `CONFIG_XIAOZHI_REQUIRE_TTS_TURN_TAGS` 实现，缺任一项不能发布。
 
 ## 隔离构建及离线核验
 
@@ -24,9 +24,9 @@ python3 scripts/package_bread_ai.py verify "$RELEASE_OUTPUT"
 
 构建前必须在被提交的源码中递增 `PROJECT_VER`；工具要求 app descriptor、构建元数据和 `--app-version` 一致，并与操作者提供的 `--previous-version` 比较。它不代替服务端对已发布版本的持久化单调检查。worktree 中的源码必须是干净的已提交状态；外部片段只注入已审核 OTA 地址，不修改 Git 源码。构建环境、依赖和源码提交仍应另行归档；源码 SHA 和哈希提供可追溯性，不是固件签名或远程证明。
 
-工具核对真实芯片、变体名、目标分区表、16 MB Flash、Quad PSRAM、编译配置、app 大小、构建来源、匹配的 assets 索引及 MultiNet7/FST 文件和三条唤醒命令。它仅从构建产物的固定组件重建 `first-flash.bin`，不会读取或复制设备的 NVS、密钥或其他私人闪存。产物包括 `app.bin`、`assets.bin`、`first-flash.bin` 和 `manifest.json`，分别记录 SHA-256、字节数、硬件、版本、源码提交和 SDK。首次刷机镜像的 NVS 区域为全 `0xff`，**对已使用设备刷写整片镜像会擦除该区域，不得直接用于保留现有配置的设备**。
+工具核对真实芯片、变体名、目标分区表、16 MB Flash、Quad PSRAM、编译配置、app 大小、构建来源、匹配的 assets 索引及 MultiNet7/FST 文件和四条唤醒命令。它仅从构建产物的固定组件重建 `first-flash.bin`，不会读取或复制设备的 NVS、密钥或其他私人闪存。产物包括 `app.bin`、`assets.bin`、`first-flash.bin` 和 `manifest.json`，分别记录 SHA-256、字节数、硬件、版本、源码提交和 SDK。首次刷机镜像的 NVS 区域为全 `0xff`，**对已使用设备刷写整片镜像会擦除该区域，不得直接用于保留现有配置的设备**。
 
-manifest 的 `firmware` 是供 Server 发布流程使用的草稿；固件 URL 和 assets URL 为 `null`，必须由受控发布流程填入可信地址并按实际授权机制处理，当前文件不构成可用发布或签名。assets 分区单副本：设备已有资源未匹配时，不能直接执行 app OTA；应使用经过审核的完整首刷/恢复方案，不能宣称 assets 独立更新具有原子回滚。上传、灰度、设备授权、断电回滚、音频、三唤醒词和真机验收均不在离线工具的通过范围内。
+manifest 的 `firmware` 是供 Server 发布流程使用的草稿；固件 URL 和 assets URL 为 `null`，必须由受控发布流程填入可信地址并按实际授权机制处理，当前文件不构成可用发布或签名。assets 分区单副本：设备已有资源未匹配时，不能直接执行 app OTA；应使用经过审核的完整首刷/恢复方案，不能宣称 assets 独立更新具有原子回滚。上传、灰度、设备授权、断电回滚、音频、四个唤醒词和真机验收均不在离线工具的通过范围内。
 
 ## 局域网开发候选
 

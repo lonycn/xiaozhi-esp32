@@ -18,7 +18,7 @@ def assets(commands=pkg.WAKE_WORDS, models=('mn7_cn', 'fst')):
         headers.extend(b'data'.ljust(32, b'\0') + struct.pack('<II', data_start+i, 1))
     headers.extend(b'x' * len(models))
     index = json.dumps({'srmodels': 'srmodels.bin', 'multinet_model': {'language': 'cn',
-        'commands': [{'action': 'wake', 'command': c, 'text': '大冷总管'} for c in sorted(commands)]}}).encode()
+        'commands': [{'action': 'wake', 'command': c, 'text': pkg.WAKE_PHRASES.get(c, '旧唤醒词')} for c in sorted(commands)]}}).encode()
     table, payload = bytearray(), bytearray()
     for name, data in [('srmodels.bin', bytes(headers)), ('index.json', index)]:
         table.extend(name.encode().ljust(32, b'\0') + struct.pack('<IIHH', len(data), len(payload), 0, 0))
@@ -57,8 +57,10 @@ class BreadPackageTest(unittest.TestCase):
                   'CONFIG_FLASH_DEFAULT_ASSETS':'y', 'CONFIG_OTA_URL':json.dumps(self.url),
                   'CONFIG_XIAOZHI_REQUIRE_RELEASE_MANIFEST':'y', 'CONFIG_XIAOZHI_REQUIRE_TTS_TURN_TAGS':'y',
                   'CONFIG_XIAOZHI_CONTROLLED_RELEASE':'y', 'CONFIG_XIAOZHI_ALLOW_AUTOMATIC_FIRMWARE_UPGRADE':'y',
-                  'CONFIG_CUSTOM_WAKE_WORD':'"da leng zong guan"',
-                  'CONFIG_CUSTOM_WAKE_WORD_ALIASES':'"ni hao zong guan;zong guan zong guan"'}
+                  'CONFIG_CUSTOM_WAKE_WORD':'"ni hao zong guan"',
+                  'CONFIG_CUSTOM_WAKE_WORD_DISPLAY':'"你好总管"',
+                  'CONFIG_CUSTOM_WAKE_WORD_ALIAS_DISPLAYS':'"总管总管;你好小云;小云小云"',
+                  'CONFIG_CUSTOM_WAKE_WORD_ALIASES':'"zong guan zong guan;ni hao xiao yun;xiao yun xiao yun"'}
         (self.root / 'sdkconfig').write_text(''.join(k+'='+v+'\n' for k,v in config.items()))
         app = bytearray(288); app[0] = 0xe9; struct.pack_into('<H', app, 12, 9); struct.pack_into('<I', app, 32, 0xabcd5432)
         for offset, text in [(48,'2.5.3'), (80,'xiaozhi'), (144,'v6.0.1')]: app[offset:offset+len(text)] = text.encode()
@@ -86,7 +88,10 @@ class BreadPackageTest(unittest.TestCase):
             with self.assertRaises(ValueError): pkg.check_ota_url(url)
         with self.assertRaises(ValueError): pkg.package(self.root,self.output,self.url,'2.5.2','2.5.2','1.0.0')
         (self.build/'generated_assets.bin').write_bytes(assets(commands={'da leng zong guan'}))
-        with self.assertRaisesRegex(ValueError, 'three wake'): self.package()
+        with self.assertRaisesRegex(ValueError, 'four wake'): self.package()
+        with self.assertRaisesRegex(ValueError, 'four wake'):
+            pkg.check_assets(assets(commands={'da leng zong guan', 'ni hao zong guan',
+                                              'zong guan zong guan'}))
         (self.build/'generated_assets.bin').write_bytes(assets(models=('mn7_cn',)))
         with self.assertRaisesRegex(ValueError, 'FST'): self.package()
         (self.build/'generated_assets.bin').write_bytes(assets())
@@ -140,7 +145,7 @@ class BreadPackageTest(unittest.TestCase):
         self.assertIn('CONFIG_XIAOZHI_REQUIRE_TTS_TURN_TAGS=y', data)
         self.assertIn('CONFIG_USE_CUSTOM_WAKE_WORD=y', data)
         self.assertIn('CONFIG_LANGUAGE_ZH_CN=y', data)
-        self.assertIn('CONFIG_CUSTOM_WAKE_WORD_ALIASES="ni hao zong guan;zong guan zong guan"', data)
+        self.assertIn('CONFIG_CUSTOM_WAKE_WORD_ALIASES="zong guan zong guan;ni hao xiao yun;xiao yun xiao yun"', data)
         with self.assertRaises(ValueError): pkg.prepare_config(source, path, self.url)
 
     def test_variant_is_unique_and_controlled(self):
