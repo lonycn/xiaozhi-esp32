@@ -1503,11 +1503,12 @@ class LanguageBuildTests(unittest.TestCase):
                         validate.assert_any_call([expected.split("=", 1)[0]], "--language")
                         models = [item for item in fragment if item.startswith("CONFIG_SR_WN_")]
                         if profiled:
-                            self.assertEqual(models, [])
+                            self.assertEqual(models, ["CONFIG_SR_WN_WN9_NIHAOXIAOZHI_TTS=y"])
                             self.assertIn("CONFIG_USE_CUSTOM_WAKE_WORD=y", fragment)
                             self.assertIn('CONFIG_CUSTOM_WAKE_WORD_ALIASES="zong guan zong guan;ni hao xiao yun;xiao yun xiao yun"', fragment)
                             validate.assert_any_call(
-                                ["CONFIG_USE_CUSTOM_WAKE_WORD", "CONFIG_SR_MN_CN_MULTINET7_QUANT"],
+                                ["CONFIG_USE_CUSTOM_WAKE_WORD", "CONFIG_SR_MN_CN_MULTINET7_QUANT",
+                                 "CONFIG_SR_WN_WN9_NIHAOXIAOZHI_TTS"],
                                 "--wake-word",
                             )
                         elif variant["wake_word_supported"]:
@@ -1556,6 +1557,7 @@ class LanguageBuildTests(unittest.TestCase):
                     self.assertIn("CONFIG_LANGUAGE_EN_US=y", fragment)
                     self.assertNotIn("CONFIG_LANGUAGE_ZH_CN=y", fragment)
                     self.assertIn("CONFIG_USE_CUSTOM_WAKE_WORD=n", fragment)
+                    self.assertNotIn("CONFIG_SR_WN_WN9_NIHAOXIAOZHI_TTS=y", fragment)
                     expected = ("CONFIG_WAKE_WORD_DISABLED=y" if wake_word == "disabled"
                                 else "CONFIG_SR_WN_WN9_HIESP=y")
                     self.assertIn(expected, fragment)

@@ -101,7 +101,7 @@ class CustomWakeAssetsTest(unittest.TestCase):
                 if aliases is None:
                     self.assertEqual(BUILD.read_custom_wake_word_from_sdkconfig(config)['aliases'], [])
 
-    def test_product_profile_emits_four_distinct_labels(self):
+    def test_product_profile_combines_stock_wakenet_and_four_multinet_labels(self):
         import sys
         sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
         from product_profiles import variant_sdkconfig
@@ -115,7 +115,13 @@ class CustomWakeAssetsTest(unittest.TestCase):
                 model.mkdir(parents=True)
                 (model / 'data').write_bytes(b'model')
 
+            wake_model = root / 'wakenet_model' / 'wn9_nihaoxiaozhi_tts'
+            wake_model.mkdir(parents=True)
+            (wake_model / 'data').write_bytes(b'wakenet')
+
             def build_index(*args, **kwargs):
+                self.assertEqual(args[0], [str(wake_model)])
+                self.assertEqual({Path(path).name for path in args[1]}, {'mn7_cn', 'fst'})
                 BUILD.generate_index_json(directory, 'srmodels.bin', None, [],
                                           multinet_model_info=args[6])
                 return True

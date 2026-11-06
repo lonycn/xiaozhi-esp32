@@ -28,6 +28,8 @@ ASSETS_OFFSET, ASSETS_SIZE = 0x800000, 0x800000
 WAKE_PHRASES = {'ni hao zong guan': '你好总管', 'zong guan zong guan': '总管总管',
                 'ni hao xiao yun': '你好小云', 'xiao yun xiao yun': '小云小云'}
 WAKE_WORDS = set(WAKE_PHRASES)
+STOCK_WAKE_MODEL = 'wn9_nihaoxiaozhi_tts'
+STOCK_WAKE_MODEL_MIN_VERSION = (2, 5, 25)
 FILES = {'bootloader/bootloader.bin': 0, 'partition_table/partition-table.bin': 0x8000,
          'ota_data_initial.bin': 0xd000, 'xiaozhi.bin': APP_OFFSET,
          'generated_assets.bin': ASSETS_OFFSET}
@@ -110,7 +112,7 @@ def assets_files(image):
     return files
 
 
-def check_assets(image):
+def check_assets(image, *, require_stock_wakenet=False):
     files = assets_files(image)
     require('index.json' in files and 'srmodels.bin' in files, 'missing wake assets')
     index = json.loads(files['index.json'])
@@ -148,6 +150,8 @@ def check_assets(image):
                 for other_start, other_end in data_ranges[:i])
                 for i, (start, end) in enumerate(data_ranges)), 'overlapping wake model data')
     require({'mn7_cn', 'fst'}.issubset(models), 'missing MultiNet7 or FST wake resources')
+    if require_stock_wakenet:
+        require(STOCK_WAKE_MODEL in models, 'missing stock WakeNet model for 你好小智')
 
 
 def check_partition_table(data):
@@ -237,6 +241,9 @@ def package(snapshot, output, ota_url, app_version, previous_version, assets_ver
                 'CONFIG_CUSTOM_WAKE_WORD_DISPLAY': '"你好总管"',
                 'CONFIG_CUSTOM_WAKE_WORD_ALIAS_DISPLAYS': '"总管总管;你好小云;小云小云"',
                 'CONFIG_CUSTOM_WAKE_WORD_ALIASES': '"zong guan zong guan;ni hao xiao yun;xiao yun xiao yun"'}
+    require_stock_wakenet = version(app_version) >= STOCK_WAKE_MODEL_MIN_VERSION
+    if require_stock_wakenet:
+        required['CONFIG_SR_WN_WN9_NIHAOXIAOZHI_TTS'] = 'y'
     require(all(cfg.get(k) == v for k, v in required.items()), 'release sdkconfig mismatch')
     require(enabled(cfg, 'CONFIG_XIAOZHI_RELEASE_ALLOW_LAN_HTTP') == development_lan, 'LAN development setting mismatch')
     require(not any(enabled(cfg, k) for k in ('CONFIG_XIAOZHI_USB_SCREEN_MIRROR', 'CONFIG_XIAOZHI_USB_TEXT_CHAT',
@@ -264,7 +271,7 @@ def package(snapshot, output, ota_url, app_version, previous_version, assets_ver
     sdk = re.match(r'^v?(\d+\.\d+\.\d+)(?:[-+].*)?$', metadata['sdk'])
     require(sdk is not None and version(sdk.group(1)) >= (6, 0, 1), 'unsupported ESP-IDF version')
     require(board_name.encode() in app and ota_url.encode() in app, 'app does not contain expected board or OTA URL')
-    check_assets(assets)
+    check_assets(assets, require_stock_wakenet=require_stock_wakenet)
     image = bytearray(b'\xff' * FLASH)
     for name, offset in FILES.items():
         data = blobs[name]
@@ -338,7 +345,7 @@ def verify(output, development_lan=False):
     metadata = read_app(app)
     require(metadata['version'] == manifest['app_version'] and metadata['sdk'] == manifest['idf_version']
             and board_name.encode() in app and manifest['ota_url'].encode() in app, 'app metadata mismatch')
-    check_assets(assets)
+    check_assets(assets, require_stock_wakenet=version(metadata['version']) >= STOCK_WAKE_MODEL_MIN_VERSION)
     return manifest
 
 

@@ -1,6 +1,6 @@
 # ESP32-S3 本地唤醒词
 
-OLED 和圆屏的定制变体从 2.5.24 起使用以下四个唤醒词，开机提示显示各自的中文名称。识别命中后发送实际匹配的名称；“大冷总管”不再是配置的唤醒词。
+OLED 和圆屏的 2.5.25 定制变体支持五个本地唤醒词。下表四个词由 MultiNet7 识别，「你好小智」由原版专用 WakeNet 模型 `wn9_nihaoxiaozhi_tts` 识别。开机提示列出五个词，命中后发送实际词名。
 
 | 唤醒词 | MultiNet7 拼音 |
 | --- | --- |
@@ -24,7 +24,7 @@ python3 scripts/build.py bread-compact-wifi --name bread-compact-wifi-128x32-usb
 
 构建生成的 `build/generated_assets.bin` 必须包含：
 
-- `srmodels.bin` 中的 `mn7_cn` 和 `fst`，不打包旧 WakeNet 模型。
+- `srmodels.bin` 中的 `mn7_cn`、`fst` 和 `wn9_nihaoxiaozhi_tts`。
 - `index.json` 中 `multinet_model.language=cn`、`duration=3000`、`threshold=0.2`。
 - 四个唤醒条目，拼音与中文标签如上表，均为 `action="wake"`。
 - 原 OLED 中文字体。
@@ -59,8 +59,8 @@ python3 scripts/build.py bread-compact-wifi --name bread-compact-wifi-128x32-usb
 
 现场应分别检查：
 
-1. 启动日志实际列出 `mn7_cn`、`fst` 及上述四个命令，进入待机且没有异常重启。
-2. 真人分别说四个新词，确认每个都能唤醒、收音并得到回复；用旧词“大冷总管”检查是否误唤醒。
+1. 启动日志实际列出 `mn7_cn`、`fst` 和 `wn9_nihaoxiaozhi_tts` 及四个 MultiNet 命令，进入待机且没有异常重启。
+2. 真人分别说五个词，确认每个都能唤醒、收音并得到回复；用旧词“大冷总管”检查是否误唤醒。
 3. “你好小智”和相近词的误触发、不同说话人及 1 米/3 米距离、风扇等环境噪声。
 4. 连续唤醒、对话结束回到待机、重启、播放期间的行为和断线恢复。
 5. 128×32 OLED、USB 校验帧、远程文字输入和原 DSH 对话接入。

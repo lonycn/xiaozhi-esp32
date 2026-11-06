@@ -1657,7 +1657,11 @@ def build_board(
             selected_wake_word = "custom"
             wake_word_options = []
             wake_word_symbols = ["CONFIG_USE_CUSTOM_WAKE_WORD", "CONFIG_SR_MN_CN_MULTINET7_QUANT"]
+            if profile_assignments.get("CONFIG_SR_WN_WN9_NIHAOXIAOZHI_TTS") == "y":
+                wake_word_symbols.append("CONFIG_SR_WN_WN9_NIHAOXIAOZHI_TTS")
         else:
+            sdkconfig_append = [item for item in sdkconfig_append
+                                if not item.startswith("CONFIG_SR_WN_")]
             (
                 selected_wake_word,
                 wake_word_options,

@@ -1044,13 +1044,19 @@ def main():
     wakenet_model_paths = []
     multinet_model_paths = []
     
-    # 1. Only package wakenet models if USE_ESP_WAKE_WORD=y or USE_AFE_WAKE_WORD=y
-    if wake_word_config['use_esp_wake_word'] or wake_word_config['use_afe_wake_word']:
+    # A custom profile can opt into the stock WakeNet model alongside MultiNet.
+    stock_wakenet = 'wn9_nihaoxiaozhi_tts'
+    custom_with_stock_wakenet = (wake_word_config['use_custom_wake_word']
+                                 and stock_wakenet in wakenet_model_names)
+    if custom_with_stock_wakenet:
+        wakenet_model_names = [stock_wakenet]
+    if (wake_word_config['use_esp_wake_word'] or wake_word_config['use_afe_wake_word']
+            or custom_with_stock_wakenet):
         wakenet_model_paths = get_wakenet_model_paths(wakenet_model_names, args.esp_sr_model_path)
         if not wakenet_model_names or len(wakenet_model_paths) != len(wakenet_model_names):
             parser.error("Wake-word detection requires selected, available ESP-SR WakeNet models")
     elif wakenet_model_names:
-        print(f"  Note: Found wakenet models {wakenet_model_names} but wake word type is not ESP/AFE, skipping")
+        print(f"  Note: Found unselected WakeNet models {wakenet_model_names}, skipping")
     
     # 2. Error check: if USE_CUSTOM_WAKE_WORD=y but no multinet models selected, report error
     if wake_word_config['use_custom_wake_word'] and not multinet_model_names:

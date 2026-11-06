@@ -99,6 +99,13 @@ class BreadPackageTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'board'): self.package()
         self.assertFalse(self.output.exists())
 
+    def test_five_word_assets_require_stock_wakenet_with_legacy_compatibility(self):
+        pkg.check_assets(assets())
+        with self.assertRaisesRegex(ValueError, 'stock WakeNet'):
+            pkg.check_assets(assets(), require_stock_wakenet=True)
+        pkg.check_assets(assets(models=('mn7_cn', 'fst', pkg.STOCK_WAKE_MODEL)),
+                         require_stock_wakenet=True)
+
     def test_explicit_lan_candidate_is_not_a_formal_release(self):
         for url in ('http://10.4.2.1:8080/ota/', 'http://172.16.0.1/ota/',
                     'http://192.168.3.10:18893/ota/', 'http://127.0.0.1:8080/ota/'):

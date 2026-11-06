@@ -16,6 +16,7 @@
 #include <freertos/task.h>
 
 #include "audio_engine.h"
+#include "playback_wake_filter.h"
 #include "wake_words/wake_word_audio_cache.h"
 
 class CustomWakeWord;
@@ -51,12 +52,6 @@ public:
     const std::string& GetLastDetectedWakeWord() const override { return last_detected_wake_word_; }
 
 private:
-    enum class WakeDetector {
-        kNone,
-        kWakeNet,
-        kMultiNet,
-    };
-
     static constexpr EventBits_t kWakeWordEnabled = 1 << 0;
     static constexpr EventBits_t kVoiceProcessingEnabled = 1 << 1;
     static constexpr EventBits_t kAfeActive = 1 << 2;
@@ -83,11 +78,14 @@ private:
     // Incremented whenever an active AFE session is invalidated. ProcessingTask
     // uses it to reject a fetch result produced before a disable/re-enable cycle.
     std::atomic<uint32_t> control_generation_{0};
-    WakeDetector wake_detector_ = WakeDetector::kNone;
+    bool has_wakenet_ = false;
+    std::atomic<bool> last_wake_from_multinet_{true};
+    bool encode_with_multinet_ = false;
 
     std::unique_ptr<CustomWakeWord> custom_wake_word_;
     std::function<void(const std::string&, const std::string&)> voice_control_callback_;
     std::vector<std::string> wake_words_;
+    PlaybackWakeFilter wakenet_playback_filter_;
     std::string last_detected_wake_word_;
     std::vector<int16_t> input_buffer_;
     std::vector<int16_t> output_buffer_;
@@ -112,6 +110,7 @@ private:
     void ApplyPendingReset();
     void OutputRawAudio(const std::vector<int16_t>& data);
     void HandleWakeWordResult(const afe_fetch_result_t* result);
+    bool HandleWakeNetResult(const afe_fetch_result_t* result);
     void HandleVoiceResult(const afe_fetch_result_t* result);
 };
 
