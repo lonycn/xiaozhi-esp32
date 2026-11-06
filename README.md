@@ -39,6 +39,8 @@ python3 scripts/build.py spotpear/sp-esp32-s3-1.28-box   --name sp-esp32-s3-1.28
 
 以上两个变体共享 `profiles/daleng-cn.defaults`，默认中文界面及四条自定义唤醒词。显式传入 `--language` 或 `--wake-word` 可覆盖对应默认值；正式打包仍会检查四条唤醒词。
 
+自建服务地址可通过环境变量 `XIAOZHI_OTA_URL` 或仓库根目录的 `.env` 设置。填写服务器的 HTTPS OTA 引导接口，设备启动时会从该接口取得 WSS 地址和连接凭据。构建时优先使用环境变量，`.env` 由 Git 忽略。
+
 编译脚本会更新本机 `sdkconfig` 与 `build/`；以上命令只编译，不烧录。连接设备前需明确配置自己的 OTA 服务地址：OLED 受控变体默认留空，圆屏配置中的 LAN 地址是已有开发环境的值。OLED 的外部配置片段和打包方式见[发布说明](main/boards/bread-compact-wifi/RELEASE_AI.md)。
 
 ## 源码入口

@@ -1333,6 +1333,22 @@ def _merge_sdkconfig_options(
     return [values[key] for key in keys]
 
 
+def _local_ota_url() -> Optional[str]:
+    """Read the HTTPS bootstrap URL from the environment or the ignored .env."""
+    url = os.environ.get("XIAOZHI_OTA_URL")
+    env_file = Path(".env")
+    if url is None and env_file.is_file():
+        for line in env_file.read_text(encoding="utf-8").splitlines():
+            key, separator, value = line.partition("=")
+            if separator and key.strip() == "XIAOZHI_OTA_URL":
+                url = value.strip()
+    if url:
+        from package_bread_ai import check_ota_url
+
+        check_ota_url(url)
+    return url or None
+
+
 ################################################################################
 # Check board_type in CMakeLists
 ################################################################################
@@ -1669,6 +1685,12 @@ def build_board(
             )
             user_options.extend(build_option_sdkconfig)
 
+        ota_url = _local_ota_url()
+        if ota_url:
+            user_options.append(f"CONFIG_OTA_URL={json.dumps(ota_url)}")
+            if profile_assignments.get("CONFIG_XIAOZHI_CONTROLLED_RELEASE") == "y":
+                user_options.append("CONFIG_XIAOZHI_RELEASE_ALLOW_LAN_HTTP=n")
+
         sdkconfig_append = _merge_sdkconfig_options(
             sdkconfig_append,
             user_options,
@@ -1691,6 +1713,8 @@ def build_board(
                 + json.dumps(selected_build_options, ensure_ascii=False, sort_keys=True)
             )
         for item in sdkconfig_append:
+            if ota_url and item.startswith("CONFIG_OTA_URL="):
+                item = "CONFIG_OTA_URL=<local environment>"
             print(f"sdkconfig_append: {item}")
 
         _emit_build_stage("dependencies_resolving")
