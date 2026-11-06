@@ -1066,6 +1066,14 @@ choice WAKE_WORD_TYPE
 
 endchoice
 
+config XIAOZHI_STOCK_WAKE_ONLY
+    bool "Use only the stock Hello Xiaozhi WakeNet model"
+    depends on IDF_TARGET_ESP32S3 && USE_AFE_WAKE_WORD && SR_WN_WN9_NIHAOXIAOZHI_TTS
+    default n
+    help
+        Ignore MultiNet commands and other WakeNet models in existing assets.
+        Use this for an isolated Hello Xiaozhi wake-word test.
+
 config CUSTOM_WAKE_WORD
     string "Custom Wake Word"
     default "xiao tu dou"

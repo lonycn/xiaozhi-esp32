@@ -1667,6 +1667,10 @@ def build_board(
                 wake_word_options,
                 wake_word_symbols,
             ) = _wake_word_sdkconfig_options(requested_wake_word, target)
+            if (wake_word is not None and selected_wake_word == "wn9_nihaoxiaozhi_tts"
+                    and profile_assignments.get("CONFIG_USE_CUSTOM_WAKE_WORD") == "y"):
+                wake_word_options.append("CONFIG_XIAOZHI_STOCK_WAKE_ONLY=y")
+                wake_word_symbols.append("CONFIG_XIAOZHI_STOCK_WAKE_ONLY")
         if selected_wake_word != "disabled" and not wake_word_supported:
             raise ValueError(
                 f"Wake-word detection is disabled or unsupported for {final_name!r}; "

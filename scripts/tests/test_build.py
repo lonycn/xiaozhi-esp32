@@ -1562,6 +1562,21 @@ class LanguageBuildTests(unittest.TestCase):
                                 else "CONFIG_SR_WN_WN9_HIESP=y")
                     self.assertIn(expected, fragment)
 
+    def test_stock_wake_override_ignores_multinet_in_existing_assets(self):
+        with self.mock_idf() as (_, configure, validate):
+            build.build_board(
+                "spotpear/sp-esp32-s3-1.28-box", name_filter="sp-esp32-s3-1.28-box-ai-lan",
+                wake_word="nihaoxiaozhi", idf_version=(6, 1, 0),
+            )
+            fragment = configure.call_args.args[1]
+            self.assertIn("CONFIG_USE_CUSTOM_WAKE_WORD=n", fragment)
+            self.assertIn("CONFIG_XIAOZHI_STOCK_WAKE_ONLY=y", fragment)
+            validate.assert_any_call(
+                ["CONFIG_USE_AFE_WAKE_WORD", "CONFIG_SR_WN_WN9_NIHAOXIAOZHI_TTS",
+                 "CONFIG_XIAOZHI_STOCK_WAKE_ONLY"],
+                "--wake-word",
+            )
+
     def test_invalid_language_stops_before_sdk_mutations(self):
         with self.mock_idf() as (prepare, configure, _):
             for language in ("xx-YY", ""):

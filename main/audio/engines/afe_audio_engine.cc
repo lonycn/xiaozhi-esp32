@@ -21,6 +21,11 @@ static constexpr bool kUseAfeForVoiceProcessing = true;
 #else
 static constexpr bool kUseAfeForVoiceProcessing = false;
 #endif
+#if CONFIG_XIAOZHI_STOCK_WAKE_ONLY
+static constexpr bool kStockWakeOnly = true;
+#else
+static constexpr bool kStockWakeOnly = false;
+#endif
 
 AfeAudioEngine::AfeAudioEngine() { event_group_ = xEventGroupCreate(); }
 
@@ -74,11 +79,18 @@ bool AfeAudioEngine::Initialize(AudioCodec* codec, int frame_duration_ms,
     char* wakenet_model_name = nullptr;
     char* multinet_model_name = nullptr;
     if (models_ != nullptr && models_->num > 0) {
-        wakenet_model_name = esp_srmodel_filter(models_, ESP_WN_PREFIX, nullptr);
-        multinet_model_name = esp_srmodel_filter(models_, ESP_MN_PREFIX, nullptr);
+        wakenet_model_name = esp_srmodel_filter(
+            models_, ESP_WN_PREFIX, kStockWakeOnly ? "nihaoxiaozhi_tts" : nullptr);
+        if (!kStockWakeOnly) {
+            multinet_model_name = esp_srmodel_filter(models_, ESP_MN_PREFIX, nullptr);
+        }
         for (int i = 0; i < models_->num; ++i) {
             ESP_LOGI(TAG, "Model %d: %s", i, models_->model_name[i]);
         }
+    }
+    if (kStockWakeOnly && wakenet_model_name == nullptr) {
+        ESP_LOGE(TAG, "Stock Hello Xiaozhi WakeNet model is missing from the loaded assets");
+        return false;
     }
 
     if (multinet_model_name != nullptr) {
@@ -160,7 +172,7 @@ bool AfeAudioEngine::Initialize(AudioCodec* codec, int frame_duration_ms,
     afe_config->wakenet_model_name_2 = nullptr;
     if (has_wakenet_ && models_ != nullptr) {
         std::vector<char*> wakenet_models;
-        if (custom_wake_word_) {
+        if (kStockWakeOnly || custom_wake_word_) {
             wakenet_models.push_back(wakenet_model_name);
         } else {
             for (int i = 0; i < models_->num; ++i) {
@@ -200,7 +212,7 @@ bool AfeAudioEngine::Initialize(AudioCodec* codec, int frame_duration_ms,
             }
         }
     }
-    if (custom_wake_word_ && has_wakenet_ && !wake_words_.empty()) {
+    if ((kStockWakeOnly || custom_wake_word_) && has_wakenet_ && !wake_words_.empty()) {
         wakenet_playback_filter_.Configure(1, wake_words_.front());
     }
     afe_config->agc_init = false;
